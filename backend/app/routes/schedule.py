@@ -17,6 +17,7 @@ def enrich_run(run: ScheduleRun, db: Session) -> ScheduleRunOut:
     items = [
         ScheduleItemOut(
             id=item.id,
+            schedule_run_id=item.schedule_run_id,
             work_order_id=item.work_order_id,
             operation_id=item.operation_id,
             machine_id=item.machine_id,
@@ -27,16 +28,19 @@ def enrich_run(run: ScheduleRun, db: Session) -> ScheduleRunOut:
             delay_minutes=item.delay_minutes,
             is_late=item.is_late,
             is_conflict=item.is_conflict,
+            conflict_with_item_id=item.conflict_with_item_id if hasattr(item, 'conflict_with_item_id') else None,
         )
         for item in run.items
     ]
     return ScheduleRunOut(
-        schedule_run_id=run.id,
-        run_label=run.label,
-        algorithm=run.algorithm,
-        computed_at=run.created_at,
+        id=run.id,
         created_at=run.created_at,
+        label=run.label,
+        algorithm=run.algorithm,
+        end_time=getattr(run, 'end_time', None),
         total_operations=run.total_operations,
+        total_delay_minutes=getattr(run, 'total_delay_minutes', 0),
+        makespan_minutes=getattr(run, 'makespan_minutes', 0),
         on_time_count=run.on_time_count,
         late_count=run.late_count,
         machine_utilization_pct=run.machine_utilization_pct,
@@ -95,14 +99,12 @@ def get_kpis(db: Session = Depends(get_db)):
     )
     completed_total = completed or 1
     on_time_rate = round((on_time / completed_total) * 100, 1)
-
     lead_times = [
         (w.completed_at - w.started_at).total_seconds() / 3600
         for w in all_wos
         if w.completed_at and w.started_at
     ]
     avg_lead_time_hours = round(sum(lead_times) / len(lead_times), 1) if lead_times else 0
-
     latest_run = db.query(ScheduleRun).order_by(ScheduleRun.created_at.desc()).first()
     machine_utilization = round(latest_run.machine_utilization_pct, 1) if latest_run else 0
     conflicts = db.query(ScheduleItem).filter(ScheduleItem.is_conflict == True).count() if latest_run else 0
@@ -110,10 +112,8 @@ def get_kpis(db: Session = Depends(get_db)):
         ScheduleItem.schedule_run_id == latest_run.id,
         ScheduleItem.is_late == True
     ).count() if latest_run else 0
-
     all_machines = db.query(Machine).all()
     machines_in_maintenance = sum(1 for m in all_machines if m.status.value == "maintenance")
-
     return KPIOut(
         total_work_orders=total_wos,
         pending_orders=pending,
