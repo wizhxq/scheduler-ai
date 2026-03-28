@@ -8,8 +8,12 @@ services:
       - "8000:8000"
     env_file:
       - .env
+    environment:
+      # Store the SQLite file on a named volume so it survives docker-compose --build
+      - DATABASE_URL=sqlite:////data/scheduler.db
     volumes:
-      - ./backend:/app
+      - ./backend:/app          # live-reload source
+      - scheduler_db:/data      # ← persistent DB volume, never wiped by rebuilds
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   frontend:
@@ -21,3 +25,6 @@ services:
       - backend
     environment:
       - VITE_API_URL=http://localhost:8000
+
+volumes:
+  scheduler_db:   # named volume — Docker manages it, never deleted on rebuild
