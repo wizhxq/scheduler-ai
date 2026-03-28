@@ -1,44 +1,27 @@
-import { useState, useEffect } from 'react'
-import { getLatestSchedule, computeSchedule } from '../api'
+import { useState } from 'react'
+import { computeSchedule } from '../api'
+import { useSchedule } from '../context/ScheduleContext'
 
 const ALGORITHMS = [
-  { value: 'EDD', label: 'EDD — Earliest Due Date' },
-  { value: 'SPT', label: 'SPT — Shortest Processing Time' },
-  { value: 'FIFO', label: 'FIFO — First In First Out' },
+  { value: 'EDD',            label: 'EDD — Earliest Due Date' },
+  { value: 'SPT',            label: 'SPT — Shortest Processing Time' },
+  { value: 'FIFO',           label: 'FIFO — First In First Out' },
   { value: 'CRITICAL_RATIO', label: 'Critical Ratio' },
 ]
 
 export default function SchedulePage() {
-  const [schedule, setSchedule] = useState<any>(null)
-  const [loading, setLoading] = useState(false)
+  // Read schedule from shared context — updated by CalendarPage drag-drops too
+  const { schedule, loading, setSchedule } = useSchedule()
   const [computing, setComputing] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error,     setError]     = useState<string | null>(null)
   const [algorithm, setAlgorithm] = useState('EDD')
-
-  const load = async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const data = await getLatestSchedule()
-      setSchedule(data)
-    } catch (err: any) {
-      if (err.response?.status === 404) {
-        setSchedule(null)
-      } else {
-        setError('Failed to load schedule')
-      }
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => { load() }, [])
 
   const handleCompute = async () => {
     setComputing(true)
     setError(null)
     try {
       const data = await computeSchedule(algorithm)
+      // Push result into shared context — CalendarPage will re-render immediately
       setSchedule(data)
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to compute schedule')
@@ -62,7 +45,6 @@ export default function SchedulePage() {
           <h1 className="text-2xl font-bold text-white">Production Schedule</h1>
           <p className="text-gray-400 text-sm mt-1">
             {schedule
-              // created_at is the correct field — computed_at doesn't exist
               ? `Last computed: ${new Date(schedule.created_at).toLocaleString()}`
               : 'No schedule computed yet'}
           </p>
@@ -82,58 +64,46 @@ export default function SchedulePage() {
             disabled={computing}
             className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors"
           >
-            {computing ? 'Computing...' : 'Compute Schedule'}
+            {computing ? (
+              <><span className="animate-spin">⟳</span> Computing...</>
+            ) : (
+              '⚡ Compute Schedule'
+            )}
           </button>
         </div>
       </div>
 
       {error && (
-        <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 text-red-400 text-sm">
-          {error}
-        </div>
+        <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 text-red-400 text-sm">{error}</div>
       )}
 
       {schedule ? (
         <>
-          {/* KPI Stats */}
+          {/* KPI bar */}
           <div className="grid grid-cols-5 gap-4">
-            <div className="bg-[#1a1f2e] border border-white/5 rounded-2xl p-4">
-              <div className="text-gray-400 text-xs mb-1">Algorithm</div>
-              <div className="text-lg font-bold text-white">{schedule.algorithm}</div>
-            </div>
-            <div className="bg-[#1a1f2e] border border-white/5 rounded-2xl p-4">
-              <div className="text-gray-400 text-xs mb-1">Utilization</div>
-              <div className="text-2xl font-bold text-white">{schedule.machine_utilization_pct}%</div>
-            </div>
-            <div className="bg-[#1a1f2e] border border-white/5 rounded-2xl p-4">
-              <div className="text-gray-400 text-xs mb-1">On-Time Ops</div>
-              <div className="text-2xl font-bold text-emerald-400">{schedule.on_time_count} / {schedule.total_operations}</div>
-            </div>
-            <div className="bg-[#1a1f2e] border border-white/5 rounded-2xl p-4">
-              <div className="text-gray-400 text-xs mb-1">Late Ops</div>
-              <div className={`text-2xl font-bold ${schedule.late_count > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
-                {schedule.late_count}
+            {[
+              { label: 'Algorithm',    val: schedule.algorithm,              color: 'text-white' },
+              { label: 'Utilization',  val: `${schedule.machine_utilization_pct}%`, color: 'text-white' },
+              { label: 'On-Time Ops',  val: `${schedule.on_time_count} / ${schedule.total_operations}`, color: 'text-emerald-400' },
+              { label: 'Late Ops',     val: schedule.late_count,             color: schedule.late_count > 0 ? 'text-red-400' : 'text-emerald-400' },
+              { label: 'Conflicts',    val: schedule.has_conflicts ? '⚠ Yes' : '✓ None', color: schedule.has_conflicts ? 'text-amber-400' : 'text-emerald-400' },
+            ].map(k => (
+              <div key={k.label} className="bg-[#1a1f2e] border border-white/5 rounded-2xl p-4">
+                <div className="text-gray-400 text-xs mb-1">{k.label}</div>
+                <div className={`text-xl font-bold ${k.color}`}>{k.val}</div>
               </div>
-            </div>
-            <div className="bg-[#1a1f2e] border border-white/5 rounded-2xl p-4">
-              <div className="text-gray-400 text-xs mb-1">Conflicts</div>
-              <div className={`text-2xl font-bold ${schedule.has_conflicts ? 'text-amber-400' : 'text-emerald-400'}`}>
-                {schedule.has_conflicts ? '⚠ Yes' : '✓ None'}
-              </div>
-            </div>
+            ))}
           </div>
 
-          {/* Schedule Table */}
-          {schedule.items && schedule.items.length > 0 ? (
+          {/* Schedule table */}
+          {schedule.items?.length > 0 ? (
             <div className="bg-[#1a1f2e] border border-white/5 rounded-2xl overflow-hidden">
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="border-b border-white/5 bg-white/5">
-                    <th className="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Machine</th>
-                    <th className="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Work Order</th>
-                    <th className="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Start</th>
-                    <th className="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">End</th>
-                    <th className="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Status</th>
+                    {['Machine', 'Work Order', 'Start', 'End', 'Status'].map(h => (
+                      <th key={h} className="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">{h}</th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
@@ -148,15 +118,13 @@ export default function SchedulePage() {
                         <div className="text-xs text-gray-500">Op #{item.operation_id}</div>
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-300">
-                        {new Date(item.start_time).toLocaleString([], {
-                          month: 'short', day: 'numeric',
-                          hour: '2-digit', minute: '2-digit'
+                        {new Date(item.start_time).toLocaleString([],{
+                          month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'
                         })}
                       </td>
                       <td className="px-6 py-4 text-sm text-gray-300">
-                        {new Date(item.end_time).toLocaleString([], {
-                          month: 'short', day: 'numeric',
-                          hour: '2-digit', minute: '2-digit'
+                        {new Date(item.end_time).toLocaleString([],{
+                          month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'
                         })}
                       </td>
                       <td className="px-6 py-4">
@@ -184,7 +152,7 @@ export default function SchedulePage() {
             </div>
           ) : (
             <div className="bg-[#1a1f2e] border border-white/5 rounded-2xl p-8 text-center">
-              <p className="text-gray-500 text-sm">No operations scheduled. Add work orders with operations first.</p>
+              <p className="text-gray-500 text-sm">No operations scheduled yet. Add work orders with operations first.</p>
             </div>
           )}
         </>
@@ -193,11 +161,8 @@ export default function SchedulePage() {
           <div className="text-5xl mb-4">📅</div>
           <h3 className="text-white font-semibold text-lg mb-2">No Schedule Generated</h3>
           <p className="text-gray-500 text-sm mb-6">Compute a new schedule to see machine assignments and timelines.</p>
-          <button
-            onClick={handleCompute}
-            disabled={computing}
-            className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-colors"
-          >
+          <button onClick={handleCompute} disabled={computing}
+            className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-colors">
             {computing ? 'Computing...' : 'Generate First Schedule'}
           </button>
         </div>

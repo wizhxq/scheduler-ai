@@ -4,6 +4,7 @@ import WorkOrdersPage from './pages/WorkOrdersPage'
 import SchedulePage from './pages/SchedulePage'
 import ChatPage from './pages/ChatPage'
 import CalendarPage from './pages/CalendarPage'
+import { ScheduleProvider } from './context/ScheduleContext'
 import clsx from 'clsx'
 
 const NAV = [
@@ -54,18 +55,22 @@ function Sidebar() {
 export default function App() {
   return (
     <BrowserRouter>
-      <div className="flex min-h-screen bg-gray-950 text-white">
-        <Sidebar />
-        <main className="flex-1 overflow-auto">
-          <Routes>
-            <Route path="/" element={<SchedulePage />} />
-            <Route path="/calendar" element={<CalendarPage />} />
-            <Route path="/machines" element={<MachinesPage />} />
-            <Route path="/work-orders" element={<WorkOrdersPage />} />
-            <Route path="/chat" element={<ChatPage />} />
-          </Routes>
-        </main>
-      </div>
+      {/* ScheduleProvider wraps everything so both SchedulePage and CalendarPage
+          share the exact same schedule object and can trigger reloads */}
+      <ScheduleProvider>
+        <div className="flex min-h-screen bg-gray-950 text-white">
+          <Sidebar />
+          <main className="flex-1 overflow-auto">
+            <Routes>
+              <Route path="/" element={<SchedulePage />} />
+              <Route path="/calendar" element={<CalendarPage />} />
+              <Route path="/machines" element={<MachinesPage />} />
+              <Route path="/work-orders" element={<WorkOrdersPage />} />
+              <Route path="/chat" element={<ChatPage />} />
+            </Routes>
+          </main>
+        </div>
+      </ScheduleProvider>
     </BrowserRouter>
   )
 }
