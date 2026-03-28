@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { getWorkOrders, createWorkOrder, deleteWorkOrder, getMachines, getOperations, createOperation, deleteOperation } from '../api'
+import { getWorkOrders, createWorkOrder, deleteWorkOrder, updateWorkOrder, getMachines, getOperations, createOperation, deleteOperation } from '../api'
 
 const PRIORITY_CONFIG: Record<number, { label: string; color: string; dot: string }> = {
   1: { label: 'Critical', color: 'bg-red-500/20 text-red-400 border border-red-500/30', dot: 'bg-red-500' },
@@ -7,6 +7,15 @@ const PRIORITY_CONFIG: Record<number, { label: string; color: string; dot: strin
   3: { label: 'Medium', color: 'bg-blue-500/20 text-blue-400 border border-blue-500/30', dot: 'bg-blue-500' },
   4: { label: 'Low', color: 'bg-gray-500/20 text-gray-400 border border-gray-500/30', dot: 'bg-gray-500' },
 }
+
+const STATUS_OPTIONS = [
+  { value: 'pending', label: 'Pending' },
+  { value: 'in_progress', label: 'In Progress' },
+  { value: 'paused', label: 'Paused' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'on_hold', label: 'On Hold' },
+  { value: 'cancelled', label: 'Cancelled' },
+]
 
 export default function WorkOrdersPage() {
   const [workOrders, setWorkOrders] = useState<any[]>([])
@@ -16,21 +25,32 @@ export default function WorkOrdersPage() {
   const [showForm, setShowForm] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null)
 
-  // New WO form state
+  // New WO form
   const [code, setCode] = useState('')
   const [customerName, setCustomerName] = useState('')
   const [dueDate, setDueDate] = useState('')
   const [priority, setPriority] = useState(3)
 
-  // Per-WO operation form state (keyed by wo id)
+  // Per-WO operation form state
   const [opMachineByWo, setOpMachineByWo] = useState<Record<number, number>>({})
   const [opDurationByWo, setOpDurationByWo] = useState<Record<number, number>>({})
+
+  // Edit modal state
+  const [editWO, setEditWO] = useState<any | null>(null)
+  const [editCustomer, setEditCustomer] = useState('')
+  const [editDate, setEditDate] = useState('')
+  const [editTime, setEditTime] = useState('17:00')
+  const [editPriority, setEditPriority] = useState(3)
+  const [editStatus, setEditStatus] = useState('pending')
+  const [editRush, setEditRush] = useState(false)
+  const [editNotes, setEditNotes] = useState('')
+  const [editSaving, setEditSaving] = useState(false)
+  const [toast, setToast] = useState<string | null>(null)
 
   const load = async () => {
     const [wo, m] = await Promise.all([getWorkOrders(), getMachines()])
     setWorkOrders(wo)
     setMachines(m)
-    // Initialise per-WO op form defaults for any WO that doesn't have one yet
     if (m.length > 0) {
       setOpMachineByWo(prev => {
         const next = { ...prev }
@@ -47,18 +67,19 @@ export default function WorkOrdersPage() {
 
   useEffect(() => { load() }, [])
 
+  const showToast = (msg: string) => {
+    setToast(msg)
+    setTimeout(() => setToast(null), 3000)
+  }
+
   const loadOps = async (woId: number) => {
     const ops = await getOperations(woId)
     setOperations(prev => ({ ...prev, [woId]: ops }))
   }
 
   const handleExpand = (id: number) => {
-    if (expanded === id) {
-      setExpanded(null)
-    } else {
-      setExpanded(id)
-      loadOps(id)
-    }
+    if (expanded === id) { setExpanded(null) }
+    else { setExpanded(id); loadOps(id) }
   }
 
   const handleAddWO = async () => {
@@ -71,11 +92,7 @@ export default function WorkOrdersPage() {
         : new Date(Date.now() + 7 * 86400000).toISOString(),
       priority,
     })
-    setCode('')
-    setCustomerName('')
-    setDueDate('')
-    setPriority(3)
-    setShowForm(false)
+    setCode(''); setCustomerName(''); setDueDate(''); setPriority(3); setShowForm(false)
     await load()
   }
 
@@ -104,6 +121,49 @@ export default function WorkOrdersPage() {
     await loadOps(woId)
   }
 
+  const openEdit = (e: React.MouseEvent, wo: any) => {
+    e.stopPropagation()
+    setEditWO(wo)
+    setEditCustomer(wo.customer_name || '')
+    setEditPriority(wo.priority || 3)
+    setEditStatus(wo.status || 'pending')
+    setEditRush(wo.is_rush || false)
+    setEditNotes(wo.notes || '')
+    if (wo.due_date) {
+      const d = new Date(wo.due_date)
+      setEditDate(d.toISOString().split('T')[0])
+      setEditTime(d.toTimeString().slice(0, 5))
+    } else {
+      setEditDate('')
+      setEditTime('17:00')
+    }
+  }
+
+  const saveEdit = async () => {
+    if (!editWO) return
+    setEditSaving(true)
+    try {
+      const due_date = editDate
+        ? new Date(`${editDate}T${editTime}:00`).toISOString()
+        : null
+      await updateWorkOrder(editWO.id, {
+        due_date,
+        priority: editPriority,
+        status: editStatus,
+        customer_name: editCustomer || null,
+        is_rush: editRush,
+        notes: editNotes,
+      })
+      showToast(`✅ ${editWO.code} updated`)
+      setEditWO(null)
+      await load()
+    } catch {
+      showToast('❌ Failed to save changes.')
+    } finally {
+      setEditSaving(false)
+    }
+  }
+
   return (
     <div className="p-8 space-y-6">
       <div className="flex items-center justify-between">
@@ -111,10 +171,8 @@ export default function WorkOrdersPage() {
           <h1 className="text-2xl font-bold text-white">Work Orders</h1>
           <p className="text-gray-400 text-sm mt-1">{workOrders.length} orders total</p>
         </div>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-colors"
-        >
+        <button onClick={() => setShowForm(!showForm)}
+          className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-colors">
           <span className="text-lg leading-none">+</span> New Order
         </button>
       </div>
@@ -125,38 +183,23 @@ export default function WorkOrdersPage() {
           <div className="grid grid-cols-4 gap-4">
             <div>
               <label className="block text-gray-500 text-xs mb-1.5 uppercase tracking-wider font-semibold">Order Code *</label>
-              <input
-                value={code}
-                onChange={e => setCode(e.target.value)}
-                placeholder="e.g. WO-001"
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:border-blue-500/50 outline-none placeholder-gray-600"
-              />
+              <input value={code} onChange={e => setCode(e.target.value)} placeholder="e.g. WO-001"
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:border-blue-500/50 outline-none placeholder-gray-600" />
             </div>
             <div>
               <label className="block text-gray-500 text-xs mb-1.5 uppercase tracking-wider font-semibold">Customer Name</label>
-              <input
-                value={customerName}
-                onChange={e => setCustomerName(e.target.value)}
-                placeholder="e.g. Acme Corp"
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:border-blue-500/50 outline-none placeholder-gray-600"
-              />
+              <input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="e.g. Acme Corp"
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:border-blue-500/50 outline-none placeholder-gray-600" />
             </div>
             <div>
               <label className="block text-gray-500 text-xs mb-1.5 uppercase tracking-wider font-semibold">Due Date</label>
-              <input
-                type="date"
-                value={dueDate}
-                onChange={e => setDueDate(e.target.value)}
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:border-blue-500/50 outline-none [color-scheme:dark]"
-              />
+              <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)}
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:border-blue-500/50 outline-none [color-scheme:dark]" />
             </div>
             <div>
               <label className="block text-gray-500 text-xs mb-1.5 uppercase tracking-wider font-semibold">Priority</label>
-              <select
-                value={priority}
-                onChange={e => setPriority(Number(e.target.value))}
-                className="w-full bg-[#0f1117] border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:border-blue-500/50 outline-none"
-              >
+              <select value={priority} onChange={e => setPriority(Number(e.target.value))}
+                className="w-full bg-[#0f1117] border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:border-blue-500/50 outline-none">
                 <option value={1}>1 - Critical</option>
                 <option value={2}>2 - High</option>
                 <option value={3}>3 - Medium</option>
@@ -173,7 +216,7 @@ export default function WorkOrdersPage() {
 
       <div className="space-y-3">
         {workOrders.map((wo: any) => {
-          const config = PRIORITY_CONFIG[wo.priority as keyof typeof PRIORITY_CONFIG] || PRIORITY_CONFIG[3]
+          const config = PRIORITY_CONFIG[wo.priority] || PRIORITY_CONFIG[3]
           const isExpanded = expanded === wo.id
           const ops = operations[wo.id] || []
           const opMachine = opMachineByWo[wo.id] || (machines[0]?.id ?? 0)
@@ -182,19 +225,21 @@ export default function WorkOrdersPage() {
           return (
             <div key={wo.id} className={`bg-[#1a1f2e] border border-white/5 rounded-2xl overflow-hidden transition-all ${isExpanded ? 'ring-1 ring-blue-500/30' : 'hover:border-white/10'}`}>
               <div className="p-5 flex items-center justify-between">
-                {/* Left: priority dot + WO info — clickable to expand */}
-                <div
-                  className="flex items-center gap-4 flex-1 cursor-pointer"
-                  onClick={() => handleExpand(wo.id)}
-                >
+                {/* Left */}
+                <div className="flex items-center gap-4 flex-1 cursor-pointer" onClick={() => handleExpand(wo.id)}>
                   <div className={`w-2 h-2 rounded-full flex-shrink-0 ${config.dot}`} />
                   <div>
                     <h3 className="text-white font-bold flex items-center gap-2">
                       {wo.code}
+                      {wo.is_rush && <span className="text-[9px] bg-red-500/20 text-red-400 border border-red-500/30 px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wide">⚡ Rush</span>}
                       <span className="text-gray-500 font-normal text-sm">| {wo.customer_name || 'Generic'}</span>
                     </h3>
                     <p className="text-gray-500 text-xs mt-1">
-                      Due: {new Date(wo.due_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                      Due: {wo.due_date
+                        ? new Date(wo.due_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+                        : <span className="text-amber-500/70">Not scheduled</span>
+                      }
+                      {wo.notes && <span className="ml-3 text-gray-600">· {wo.notes}</span>}
                     </p>
                   </div>
                   <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-tighter ${config.color}`}>
@@ -202,42 +247,37 @@ export default function WorkOrdersPage() {
                   </span>
                 </div>
 
-                {/* Right: op count + delete + chevron */}
-                <div className="flex items-center gap-4">
+                {/* Right */}
+                <div className="flex items-center gap-3">
                   <div className="text-right cursor-pointer" onClick={() => handleExpand(wo.id)}>
                     <p className="text-white text-xs font-semibold">{ops.length > 0 ? `${ops.length} steps` : '0 steps'}</p>
                     <p className="text-gray-500 text-[10px]">Operations</p>
                   </div>
 
-                  {/* Delete work order */}
+                  {/* Edit button */}
+                  <button
+                    onClick={e => openEdit(e, wo)}
+                    title="Edit work order"
+                    className="p-2 text-gray-500 hover:text-blue-400 hover:bg-blue-500/10 rounded-lg transition-colors"
+                  >
+                    ✏️
+                  </button>
+
+                  {/* Delete */}
                   {deleteConfirm === wo.id ? (
                     <div className="flex gap-2">
-                      <button
-                        onClick={e => { e.stopPropagation(); handleDeleteWO(wo.id) }}
-                        className="text-xs px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-lg transition-colors font-semibold"
-                      >
-                        Confirm
-                      </button>
-                      <button
-                        onClick={e => { e.stopPropagation(); setDeleteConfirm(null) }}
-                        className="text-xs px-3 py-1.5 bg-white/5 hover:bg-white/10 text-gray-300 rounded-lg transition-colors"
-                      >
-                        Cancel
-                      </button>
+                      <button onClick={e => { e.stopPropagation(); handleDeleteWO(wo.id) }}
+                        className="text-xs px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-lg transition-colors font-semibold">Confirm</button>
+                      <button onClick={e => { e.stopPropagation(); setDeleteConfirm(null) }}
+                        className="text-xs px-3 py-1.5 bg-white/5 hover:bg-white/10 text-gray-300 rounded-lg transition-colors">Cancel</button>
                     </div>
                   ) : (
-                    <button
-                      onClick={e => { e.stopPropagation(); setDeleteConfirm(wo.id) }}
-                      className="text-xs text-red-400 hover:text-red-300 transition-colors px-2 py-1"
-                    >
-                      Delete
-                    </button>
+                    <button onClick={e => { e.stopPropagation(); setDeleteConfirm(wo.id) }}
+                      className="text-xs text-red-400 hover:text-red-300 transition-colors px-2 py-1">Delete</button>
                   )}
 
-                  <span
-                    className={`text-gray-500 transition-transform cursor-pointer ${isExpanded ? 'rotate-180' : ''}`}
-                    onClick={() => handleExpand(wo.id)}
-                  >▼</span>
+                  <span className={`text-gray-500 transition-transform cursor-pointer ${isExpanded ? 'rotate-180' : ''}`}
+                    onClick={() => handleExpand(wo.id)}>▼</span>
                 </div>
               </div>
 
@@ -247,16 +287,13 @@ export default function WorkOrdersPage() {
                     <h4 className="text-white font-semibold text-sm">Routing Steps</h4>
                     <p className="text-gray-500 text-[10px] uppercase">Process Flow</p>
                   </div>
-
                   {ops.length > 0 ? (
                     <div className="space-y-2">
                       {ops.slice().sort((a, b) => a.sequence_no - b.sequence_no).map((op) => {
                         const m = machines.find(mach => mach.id === op.machine_id)
                         return (
                           <div key={op.id} className="flex items-center gap-3 bg-white/5 border border-white/5 rounded-xl p-3">
-                            <div className="w-6 h-6 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center text-[10px] font-bold">
-                              {op.sequence_no}
-                            </div>
+                            <div className="w-6 h-6 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center text-[10px] font-bold">{op.sequence_no}</div>
                             <div className="flex-1">
                               <p className="text-white text-sm font-medium">{m?.name || 'Unknown Machine'}</p>
                               <p className="text-gray-500 text-[10px] font-mono">{m?.code}</p>
@@ -265,12 +302,8 @@ export default function WorkOrdersPage() {
                               <p className="text-gray-300 text-xs font-semibold">{op.processing_minutes} min</p>
                               <p className="text-gray-500 text-[10px]">Duration</p>
                             </div>
-                            <button
-                              onClick={e => { e.stopPropagation(); handleDeleteOp(wo.id, op.id) }}
-                              className="p-2 text-gray-600 hover:text-red-400 transition-colors"
-                            >
-                              ✕
-                            </button>
+                            <button onClick={e => { e.stopPropagation(); handleDeleteOp(wo.id, op.id) }}
+                              className="p-2 text-gray-600 hover:text-red-400 transition-colors">✕</button>
                           </div>
                         )
                       })}
@@ -280,42 +313,27 @@ export default function WorkOrdersPage() {
                       <p className="text-gray-500 text-xs italic">No operations defined. Add the first production step below.</p>
                     </div>
                   )}
-
-                  {/* Add operation form — per-WO state, no shared global */}
                   <div className="mt-6 pt-4 border-t border-white/5">
                     <h4 className="text-gray-400 text-[10px] font-bold uppercase tracking-widest mb-3">Add Production Step</h4>
                     <div className="flex items-end gap-3">
                       <div className="flex-1">
                         <label className="block text-gray-500 text-[10px] mb-1">Select Machine</label>
-                        {/* bg-[#0f1117] makes option text visible on all OS/browsers */}
-                        <select
-                          value={opMachine}
+                        <select value={opMachine}
                           onChange={e => setOpMachineByWo(prev => ({ ...prev, [wo.id]: Number(e.target.value) }))}
-                          className="w-full bg-[#0f1117] border border-white/10 rounded-lg px-3 py-2 text-white text-xs outline-none focus:border-blue-500/50"
-                        >
+                          className="w-full bg-[#0f1117] border border-white/10 rounded-lg px-3 py-2 text-white text-xs outline-none focus:border-blue-500/50">
                           {machines.map(m => (
-                            <option key={m.id} value={m.id} className="bg-[#0f1117] text-white">
-                              {m.name} ({m.code})
-                            </option>
+                            <option key={m.id} value={m.id} className="bg-[#0f1117] text-white">{m.name} ({m.code})</option>
                           ))}
                         </select>
                       </div>
                       <div className="w-24">
                         <label className="block text-gray-500 text-[10px] mb-1">Mins</label>
-                        <input
-                          type="number"
-                          value={opDuration}
-                          min={1}
+                        <input type="number" value={opDuration} min={1}
                           onChange={e => setOpDurationByWo(prev => ({ ...prev, [wo.id]: Number(e.target.value) }))}
-                          className="w-full bg-[#0f1117] border border-white/10 rounded-lg px-3 py-2 text-white text-xs outline-none focus:border-blue-500/50"
-                        />
+                          className="w-full bg-[#0f1117] border border-white/10 rounded-lg px-3 py-2 text-white text-xs outline-none focus:border-blue-500/50" />
                       </div>
-                      <button
-                        onClick={() => handleAddOp(wo.id)}
-                        className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white text-xs font-bold rounded-lg transition-all"
-                      >
-                        + Add Step
-                      </button>
+                      <button onClick={() => handleAddOp(wo.id)}
+                        className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white text-xs font-bold rounded-lg transition-all">+ Add Step</button>
                     </div>
                   </div>
                 </div>
@@ -324,6 +342,114 @@ export default function WorkOrdersPage() {
           )
         })}
       </div>
+
+      {/* ── Edit Modal ── */}
+      {editWO && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" onClick={() => setEditWO(null)}>
+          <div className="bg-[#1a1f2e] border border-white/10 rounded-2xl p-6 w-[480px] shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-5">
+              <div>
+                <h3 className="text-white font-bold text-lg">{editWO.code}</h3>
+                <p className="text-gray-500 text-xs mt-0.5">Edit work order details</p>
+              </div>
+              <button onClick={() => setEditWO(null)} className="text-gray-600 hover:text-gray-400 text-xl leading-none">×</button>
+            </div>
+
+            <div className="space-y-4">
+              {/* Customer */}
+              <div>
+                <label className="block text-gray-400 text-xs mb-1.5 font-semibold uppercase tracking-wider">Customer Name</label>
+                <input value={editCustomer} onChange={e => setEditCustomer(e.target.value)}
+                  placeholder="e.g. Acme Corp"
+                  className="w-full bg-[#0f1117] border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-blue-500/50" />
+              </div>
+
+              {/* Due date + time side by side */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-gray-400 text-xs mb-1.5 font-semibold uppercase tracking-wider">Due Date</label>
+                  <input type="date" value={editDate} onChange={e => setEditDate(e.target.value)}
+                    className="w-full bg-[#0f1117] border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:border-blue-500/50 [color-scheme:dark]" />
+                </div>
+                <div>
+                  <label className="block text-gray-400 text-xs mb-1.5 font-semibold uppercase tracking-wider">Due Time</label>
+                  <input type="time" value={editTime} onChange={e => setEditTime(e.target.value)}
+                    className="w-full bg-[#0f1117] border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:border-blue-500/50" />
+                </div>
+              </div>
+
+              {/* Priority */}
+              <div>
+                <label className="block text-gray-400 text-xs mb-1.5 font-semibold uppercase tracking-wider">Priority</label>
+                <div className="grid grid-cols-4 gap-2">
+                  {[1,2,3,4].map(p => {
+                    const cfg = PRIORITY_CONFIG[p]
+                    return (
+                      <button key={p} onClick={() => setEditPriority(p)}
+                        className={`py-2 rounded-xl text-xs font-bold border transition-all ${
+                          editPriority === p
+                            ? cfg.color + ' ring-2 ring-offset-1 ring-offset-[#1a1f2e] ring-current'
+                            : 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10'
+                        }`}>
+                        {cfg.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* Status */}
+              <div>
+                <label className="block text-gray-400 text-xs mb-1.5 font-semibold uppercase tracking-wider">Status</label>
+                <select value={editStatus} onChange={e => setEditStatus(e.target.value)}
+                  className="w-full bg-[#0f1117] border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:border-blue-500/50">
+                  {STATUS_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                </select>
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block text-gray-400 text-xs mb-1.5 font-semibold uppercase tracking-wider">Notes</label>
+                <input value={editNotes} onChange={e => setEditNotes(e.target.value)}
+                  placeholder="Any notes about this order"
+                  className="w-full bg-[#0f1117] border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-blue-500/50" />
+              </div>
+
+              {/* Rush flag */}
+              <div className="flex items-center justify-between bg-[#0f1117] border border-white/10 rounded-xl px-4 py-3">
+                <div>
+                  <p className="text-white text-sm font-semibold">⚡ Rush Order</p>
+                  <p className="text-gray-500 text-xs">Flags this as high-urgency for the scheduler</p>
+                </div>
+                <button onClick={() => setEditRush(r => !r)}
+                  className={`w-12 h-6 rounded-full transition-colors relative ${
+                    editRush ? 'bg-red-500' : 'bg-white/10'
+                  }`}>
+                  <span className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${
+                    editRush ? 'left-7' : 'left-1'
+                  }`} />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button onClick={saveEdit} disabled={editSaving}
+                className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-sm font-semibold rounded-xl transition-colors">
+                {editSaving ? 'Saving...' : 'Save Changes'}
+              </button>
+              <button onClick={() => setEditWO(null)}
+                className="px-4 py-2.5 bg-white/5 hover:bg-white/10 text-gray-300 text-sm rounded-xl transition-colors">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast */}
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-gray-800 border border-white/10 text-white text-sm px-5 py-3 rounded-xl shadow-2xl z-50">
+          {toast}
+        </div>
+      )}
     </div>
   )
 }
