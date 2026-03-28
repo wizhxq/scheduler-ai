@@ -4,8 +4,8 @@ import { getWorkOrders, createWorkOrder, getMachines, getOperations, createOpera
 const PRIORITY_CONFIG: Record<number, { label: string; color: string; dot: string }> = {
   1: { label: 'Critical', color: 'bg-red-500/20 text-red-400 border border-red-500/30', dot: 'bg-red-500' },
   2: { label: 'High', color: 'bg-orange-500/20 text-orange-400 border border-orange-500/30', dot: 'bg-orange-500' },
-  3: { label: 'Medium', color: 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30', dot: 'bg-yellow-500' },
-  4: { label: 'Low', color: 'bg-gray-500/20 text-gray-400 border border-gray-600', dot: 'bg-gray-500' },
+  3: { label: 'Medium', color: 'bg-blue-500/20 text-blue-400 border border-blue-500/30', dot: 'bg-blue-500' },
+  4: { label: 'Low', color: 'bg-gray-500/20 text-gray-400 border border-gray-500/30', dot: 'bg-gray-500' },
 }
 
 export default function WorkOrdersPage() {
@@ -14,10 +14,14 @@ export default function WorkOrdersPage() {
   const [operations, setOperations] = useState<Record<number, any[]>>({})
   const [expanded, setExpanded] = useState<number | null>(null)
   const [showForm, setShowForm] = useState(false)
+  
+  // New WO form state
   const [code, setCode] = useState('')
   const [customerName, setCustomerName] = useState('')
   const [dueDate, setDueDate] = useState('')
   const [priority, setPriority] = useState(3)
+
+  // New Operation form state
   const [opMachine, setOpMachine] = useState<number>(0)
   const [opDuration, setOpDuration] = useState(60)
 
@@ -27,6 +31,7 @@ export default function WorkOrdersPage() {
     setMachines(m)
     if (m.length > 0 && opMachine === 0) setOpMachine(m[0].id)
   }
+
   useEffect(() => { load() }, [])
 
   const loadOps = async (woId: number) => {
@@ -35,8 +40,12 @@ export default function WorkOrdersPage() {
   }
 
   const handleExpand = (id: number) => {
-    setExpanded(expanded === id ? null : id)
-    loadOps(id)
+    if (expanded === id) {
+      setExpanded(null)
+    } else {
+      setExpanded(id)
+      loadOps(id)
+    }
   }
 
   const handleAddWO = async () => {
@@ -55,12 +64,18 @@ export default function WorkOrdersPage() {
     await load()
   }
 
-  const handleAddOp = async (woId: number, seq: number) => {
-    await createOperation({ work_order_id: woId, machine_id: opMachine, sequence_no: seq, processing_minutes: opDuration })
+  const handleAddOp = async (woId: number) => {
+    const currentOps = operations[woId] || []
+    await createOperation({
+      work_order_id: woId,
+      machine_id: opMachine,
+      sequence_no: currentOps.length + 1,
+      processing_minutes: opDuration
+    })
     await loadOps(woId)
   }
 
-  const handleDeleteOp = async (opId: number, woId: number) => {
+  const handleDeleteOp = async (woId: number, opId: number) => {
     await deleteOperation(opId)
     await loadOps(woId)
   }
@@ -70,7 +85,7 @@ export default function WorkOrdersPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">Work Orders</h1>
-          <p className="text-gray-500 text-sm mt-1">{workOrders.length} order{workOrders.length !== 1 ? 's' : ''} total</p>
+          <p className="text-gray-400 text-sm mt-1">{workOrders.length} orders total</p>
         </div>
         <button
           onClick={() => setShowForm(!showForm)}
@@ -81,28 +96,43 @@ export default function WorkOrdersPage() {
       </div>
 
       {showForm && (
-        <div className="bg-[#1a2235] border border-white/10 rounded-2xl p-6">
-          <h2 className="text-white font-semibold mb-4">New Work Order</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-[#1a1f2e] border border-white/5 rounded-2xl p-6">
+          <h2 className="text-white font-semibold mb-4 text-lg">New Work Order</h2>
+          <div className="grid grid-cols-4 gap-4">
             <div>
-              <label className="block text-xs text-gray-400 mb-1.5 font-medium">Order Code *</label>
-              <input className="w-full bg-[#0d1526] border border-white/10 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-600"
-                value={code} onChange={e => setCode(e.target.value)} placeholder="e.g. WO-001" />
+              <label className="block text-gray-500 text-xs mb-1.5 uppercase tracking-wider font-semibold">Order Code *</label>
+              <input
+                value={code}
+                onChange={e => setCode(e.target.value)}
+                placeholder="e.g. WO-001"
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:border-blue-500/50 outline-none"
+              />
             </div>
             <div>
-              <label className="block text-xs text-gray-400 mb-1.5 font-medium">Customer Name</label>
-              <input className="w-full bg-[#0d1526] border border-white/10 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-600"
-                value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="e.g. Acme Corp" />
+              <label className="block text-gray-500 text-xs mb-1.5 uppercase tracking-wider font-semibold">Customer Name</label>
+              <input
+                value={customerName}
+                onChange={e => setCustomerName(e.target.value)}
+                placeholder="e.g. Acme Corp"
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:border-blue-500/50 outline-none"
+              />
             </div>
             <div>
-              <label className="block text-xs text-gray-400 mb-1.5 font-medium">Due Date</label>
-              <input type="date" className="w-full bg-[#0d1526] border border-white/10 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                value={dueDate} onChange={e => setDueDate(e.target.value)} />
+              <label className="block text-gray-500 text-xs mb-1.5 uppercase tracking-wider font-semibold">Due Date</label>
+              <input
+                type="date"
+                value={dueDate}
+                onChange={e => setDueDate(e.target.value)}
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:border-blue-500/50 outline-none [color-scheme:dark]"
+              />
             </div>
             <div>
-              <label className="block text-xs text-gray-400 mb-1.5 font-medium">Priority</label>
-              <select className="w-full bg-[#0d1526] border border-white/10 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                value={priority} onChange={e => setPriority(Number(e.target.value))}>
+              <label className="block text-gray-500 text-xs mb-1.5 uppercase tracking-wider font-semibold">Priority</label>
+              <select
+                value={priority}
+                onChange={e => setPriority(Number(e.target.value))}
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:border-blue-500/50 outline-none"
+              >
                 <option value={1}>1 - Critical</option>
                 <option value={2}>2 - High</option>
                 <option value={3}>3 - Medium</option>
@@ -110,88 +140,123 @@ export default function WorkOrdersPage() {
               </select>
             </div>
           </div>
-          <div className="flex gap-3 mt-4">
-            <button onClick={handleAddWO} disabled={!code.trim()}
-              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors"
-            >Create Order</button>
-            <button onClick={() => setShowForm(false)}
-              className="px-5 py-2.5 bg-white/10 hover:bg-white/20 text-gray-300 text-sm font-medium rounded-xl transition-colors"
-            >Cancel</button>
+          <div className="flex gap-3 mt-6">
+            <button onClick={handleAddWO} className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-colors">Create Order</button>
+            <button onClick={() => setShowForm(false)} className="px-6 py-2 bg-white/5 hover:bg-white/10 text-gray-300 text-sm rounded-xl transition-colors">Cancel</button>
           </div>
         </div>
       )}
 
-      {workOrders.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-center">
-          <div className="text-5xl mb-4">📋</div>
-          <p className="text-gray-400 font-medium">No work orders yet</p>
-          <p className="text-gray-600 text-sm mt-1">Create your first work order to start scheduling</p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {workOrders.sort((a, b) => (a.priority || 3) - (b.priority || 3)).map((wo) => {
-            const pConfig = PRIORITY_CONFIG[wo.priority || 3] || PRIORITY_CONFIG[3]
-            const isExpanded = expanded === wo.id
-            const ops = operations[wo.id] || []
-            return (
-              <div key={wo.id} className="bg-[#1a2235] border border-white/10 rounded-2xl overflow-hidden hover:border-white/20 transition-colors">
-                <div className="flex items-center gap-4 px-5 py-4 cursor-pointer" onClick={() => handleExpand(wo.id)}>
-                  <div className={`w-2 h-2 rounded-full flex-shrink-0 ${pConfig.dot}`} />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-3">
-                      <h3 className="text-white font-semibold text-sm font-mono">{wo.code}</h3>
-                      {wo.customer_name && <span className="text-gray-400 text-sm">{wo.customer_name}</span>}
-                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${pConfig.color}`}>{pConfig.label}</span>
-                    </div>
-                    {wo.due_date && (
-                      <p className="text-gray-500 text-xs mt-0.5">Due: {new Date(wo.due_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
-                    )}
+      <div className="space-y-3">
+        {workOrders.map((wo: any) => {
+          const config = PRIORITY_CONFIG[wo.priority as keyof typeof PRIORITY_CONFIG] || PRIORITY_CONFIG[3]
+          const isExpanded = expanded === wo.id
+          const ops = operations[wo.id] || []
+
+          return (
+            <div key={wo.id} className={`bg-[#1a1f2e] border border-white/5 rounded-2xl overflow-hidden transition-all ${isExpanded ? 'ring-1 ring-blue-500/30' : 'hover:border-white/10'}`}>
+              <div 
+                className="p-5 flex items-center justify-between cursor-pointer"
+                onClick={() => handleExpand(wo.id)}
+              >
+                <div className="flex items-center gap-4">
+                  <div className={`w-2 h-2 rounded-full ${config.dot}`} />
+                  <div>
+                    <h3 className="text-white font-bold flex items-center gap-2">
+                      {wo.code}
+                      <span className="text-gray-500 font-normal text-sm">| {wo.customer_name || 'Generic'}</span>
+                    </h3>
+                    <p className="text-gray-500 text-xs mt-1">Due: {new Date(wo.due_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
                   </div>
-                  <p className="text-xs text-gray-500">Order #{wo.id}</p>
-                  <span className={`text-gray-500 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}>▾</span>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-tighter ${config.color}`}>
+                    {config.label}
+                  </span>
                 </div>
-                {isExpanded && (
-                  <div className="border-t border-white/10 px-5 py-4 space-y-3">
-                    <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider">Operations</p>
-                    {ops.length === 0 ? (
-                      <p className="text-gray-600 text-sm">No operations yet</p>
-                    ) : (
-                      <div className="space-y-2">
-                        {ops.map((op: any) => (
-                          <div key={op.id} className="flex items-center justify-between bg-[#0d1526] rounded-xl px-4 py-3">
-                            <div className="flex items-center gap-3">
-                              <span className="w-6 h-6 rounded-full bg-blue-600/20 text-blue-400 text-xs font-bold flex items-center justify-center">{op.sequence_no}</span>
-                              <div>
-                                <p className="text-white text-sm font-medium">{machines.find(m => m.id === op.machine_id)?.name || `Machine #${op.machine_id}`}</p>
-                                <p className="text-gray-500 text-xs">{op.processing_minutes} min</p>
-                              </div>
-                            </div>
-                            <button onClick={() => handleDeleteOp(op.id, wo.id)} className="text-red-500 hover:text-red-400 text-xs transition-colors">Remove</button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {machines.length > 0 && (
-                      <div className="flex gap-2 mt-3">
-                        <select className="flex-1 bg-[#0d1526] border border-white/10 text-white rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
-                          value={opMachine} onChange={e => setOpMachine(Number(e.target.value))}>
-                          {machines.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                        </select>
-                        <input type="number" min={1} placeholder="min"
-                          className="w-24 bg-[#0d1526] border border-white/10 text-white rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
-                          value={opDuration} onChange={e => setOpDuration(Number(e.target.value))} />
-                        <button onClick={() => handleAddOp(wo.id, ops.length + 1)}
-                          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-xl transition-colors"
-                        >+ Op</button>
-                      </div>
-                    )}
+                <div className="flex items-center gap-6">
+                  <div className="text-right">
+                    <p className="text-white text-xs font-semibold">{ops.length} steps</p>
+                    <p className="text-gray-500 text-[10px]">Operations</p>
                   </div>
-                )}
+                  <span className={`text-gray-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`}>▼</span>
+                </div>
               </div>
-            )
-          })}
-        </div>
-      )}
+
+              {isExpanded && (
+                <div className="border-t border-white/5 bg-[#141824] p-5 space-y-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-white font-semibold text-sm">Routing Steps</h4>
+                    <p className="text-gray-500 text-[10px] uppercase">Process Flow</p>
+                  </div>
+                  
+                  {ops.length > 0 ? (
+                    <div className="space-y-2">
+                      {ops.sort((a,b) => a.sequence_no - b.sequence_no).map((op, idx) => {
+                        const m = machines.find(mach => mach.id === op.machine_id)
+                        return (
+                          <div key={op.id} className="flex items-center gap-3 bg-white/5 border border-white/5 rounded-xl p-3">
+                            <div className="w-6 h-6 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center text-[10px] font-bold">
+                              {op.sequence_no}
+                            </div>
+                            <div className="flex-1">
+                              <p className="text-white text-sm font-medium">{m?.name || 'Unknown Machine'}</p>
+                              <p className="text-gray-500 text-[10px] font-mono">{m?.code}</p>
+                            </div>
+                            <div className="text-right mr-4">
+                              <p className="text-gray-300 text-xs font-semibold">{op.processing_minutes} min</p>
+                              <p className="text-gray-500 text-[10px]">Duration</p>
+                            </div>
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); handleDeleteOp(wo.id, op.id) }}
+                              className="p-2 text-gray-600 hover:text-red-400 transition-colors"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <div className="py-8 text-center border-2 border-dashed border-white/5 rounded-2xl">
+                      <p className="text-gray-500 text-xs italic">No operations defined. Add the first production step below.</p>
+                    </div>
+                  )}
+
+                  <div className="mt-6 pt-4 border-t border-white/5">
+                    <h4 className="text-gray-400 text-[10px] font-bold uppercase tracking-widest mb-3">Add Production Step</h4>
+                    <div className="flex items-end gap-3">
+                      <div className="flex-1">
+                        <label className="block text-gray-500 text-[10px] mb-1">Select Machine</label>
+                        <select 
+                          value={opMachine} 
+                          onChange={e => setOpMachine(Number(e.target.value))}
+                          className="w-full bg-white/10 border border-white/10 rounded-lg px-3 py-2 text-white text-xs outline-none focus:border-blue-500/50"
+                        >
+                          {machines.map(m => <option key={m.id} value={m.id}>{m.name} ({m.code})</option>)}
+                        </select>
+                      </div>
+                      <div className="w-24">
+                        <label className="block text-gray-500 text-[10px] mb-1">Mins</label>
+                        <input 
+                          type="number" 
+                          value={opDuration} 
+                          onChange={e => setOpDuration(Number(e.target.value))}
+                          className="w-full bg-white/10 border border-white/10 rounded-lg px-3 py-2 text-white text-xs outline-none focus:border-blue-500/50"
+                        />
+                      </div>
+                      <button 
+                        onClick={() => handleAddOp(wo.id)}
+                        className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white text-xs font-bold rounded-lg transition-all"
+                      >
+                        + Add Step
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
