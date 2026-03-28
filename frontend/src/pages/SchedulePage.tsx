@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { computeSchedule } from '../api'
 import { useSchedule } from '../context/ScheduleContext'
+import { machineColor } from '../utils/machineColors'
 
 const ALGORITHMS = [
   { value: 'EDD',            label: 'EDD — Earliest Due Date' },
@@ -10,8 +11,7 @@ const ALGORITHMS = [
 ]
 
 export default function SchedulePage() {
-  // Read schedule from shared context — updated by CalendarPage drag-drops too
-  const { schedule, loading, setSchedule } = useSchedule()
+  const { schedule, machines, loading, setSchedule, refresh } = useSchedule()
   const [computing, setComputing] = useState(false)
   const [error,     setError]     = useState<string | null>(null)
   const [algorithm, setAlgorithm] = useState('EDD')
@@ -21,8 +21,10 @@ export default function SchedulePage() {
     setError(null)
     try {
       const data = await computeSchedule(algorithm)
-      // Push result into shared context — CalendarPage will re-render immediately
+      // Push into shared context so CalendarPage re-renders immediately
       setSchedule(data)
+      // Also refresh WOs/machines so nothing goes stale
+      refresh()
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to compute schedule')
     } finally {
@@ -38,8 +40,15 @@ export default function SchedulePage() {
     )
   }
 
+  // Build a stable machine-id → colour map for the legend
+  const machineList = machines.length > 0
+    ? machines
+    : Array.from(new Set((schedule?.items || []).map((i: any) => i.machine_id)))
+        .map((id: any) => ({ id, name: schedule?.items?.find((i: any) => i.machine_id === id)?.machine_name ?? `Machine ${id}` }))
+
   return (
     <div className="p-8 space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">Production Schedule</h1>
@@ -82,11 +91,11 @@ export default function SchedulePage() {
           {/* KPI bar */}
           <div className="grid grid-cols-5 gap-4">
             {[
-              { label: 'Algorithm',    val: schedule.algorithm,              color: 'text-white' },
-              { label: 'Utilization',  val: `${schedule.machine_utilization_pct}%`, color: 'text-white' },
-              { label: 'On-Time Ops',  val: `${schedule.on_time_count} / ${schedule.total_operations}`, color: 'text-emerald-400' },
-              { label: 'Late Ops',     val: schedule.late_count,             color: schedule.late_count > 0 ? 'text-red-400' : 'text-emerald-400' },
-              { label: 'Conflicts',    val: schedule.has_conflicts ? '⚠ Yes' : '✓ None', color: schedule.has_conflicts ? 'text-amber-400' : 'text-emerald-400' },
+              { label: 'Algorithm',   val: schedule.algorithm,                             color: 'text-white' },
+              { label: 'Utilization', val: `${schedule.machine_utilization_pct}%`,          color: 'text-white' },
+              { label: 'On-Time Ops', val: `${schedule.on_time_count} / ${schedule.total_operations}`, color: 'text-emerald-400' },
+              { label: 'Late Ops',    val: schedule.late_count,                             color: schedule.late_count > 0 ? 'text-red-400' : 'text-emerald-400' },
+              { label: 'Conflicts',   val: schedule.has_conflicts ? '⚠ Yes' : '✓ None',   color: schedule.has_conflicts ? 'text-amber-400' : 'text-emerald-400' },
             ].map(k => (
               <div key={k.label} className="bg-[#1a1f2e] border border-white/5 rounded-2xl p-4">
                 <div className="text-gray-400 text-xs mb-1">{k.label}</div>
@@ -94,6 +103,22 @@ export default function SchedulePage() {
               </div>
             ))}
           </div>
+
+          {/* Machine colour legend */}
+          {machineList.length > 0 && (
+            <div className="bg-[#1a1f2e] border border-white/5 rounded-2xl px-5 py-3 flex flex-wrap gap-x-5 gap-y-2 items-center">
+              <span className="text-gray-500 text-xs font-semibold uppercase tracking-wider mr-1">Machine Legend</span>
+              {machineList.map((m: any) => {
+                const c = machineColor(m.id)
+                return (
+                  <div key={m.id} className="flex items-center gap-1.5">
+                    <span className={`w-3 h-3 rounded-sm flex-shrink-0 ${c.bg}`} />
+                    <span className="text-gray-300 text-xs">{m.name}</span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
 
           {/* Schedule table */}
           {schedule.items?.length > 0 ? (
@@ -107,46 +132,58 @@ export default function SchedulePage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
-                  {schedule.items.map((item: any) => (
-                    <tr key={item.id} className="hover:bg-white/5 transition-colors">
-                      <td className="px-6 py-4">
-                        <div className="text-sm font-medium text-white">{item.machine_name}</div>
-                        <div className="text-xs text-gray-500 font-mono">ID #{item.machine_id}</div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="text-sm font-medium text-white">{item.work_order_name}</div>
-                        <div className="text-xs text-gray-500">Op #{item.operation_id}</div>
-                      </td>
-                      <td className="px-6 py-4 text-sm text-gray-300">
-                        {new Date(item.start_time).toLocaleString([],{
-                          month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'
-                        })}
-                      </td>
-                      <td className="px-6 py-4 text-sm text-gray-300">
-                        {new Date(item.end_time).toLocaleString([],{
-                          month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'
-                        })}
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          {item.is_late ? (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-500/10 text-red-400 border border-red-500/20">
-                              Late +{item.delay_minutes}m
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                              On Time
-                            </span>
-                          )}
-                          {item.is_conflict && (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                              ⚠ Conflict
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {schedule.items.map((item: any) => {
+                    const c = machineColor(item.machine_id)
+                    return (
+                      <tr key={item.id} className="hover:bg-white/5 transition-colors group">
+                        <td className="px-0 py-0">
+                          {/* Coloured left bar + content */}
+                          <div className="flex items-stretch">
+                            <div className={`w-1 flex-shrink-0 ${c.bg} rounded-l`} />
+                            <div className="px-5 py-4 flex items-center gap-2">
+                              <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${c.dot}`} />
+                              <div>
+                                <div className="text-sm font-medium text-white">{item.machine_name}</div>
+                                <div className="text-xs text-gray-500 font-mono">ID #{item.machine_id}</div>
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="text-sm font-medium text-white">{item.work_order_name}</div>
+                          <div className="text-xs text-gray-500">Op #{item.operation_id}</div>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-300">
+                          {new Date(item.start_time).toLocaleString([], {
+                            month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+                          })}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-300">
+                          {new Date(item.end_time).toLocaleString([], {
+                            month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+                          })}
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {item.is_late ? (
+                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-500/10 text-red-400 border border-red-500/20">
+                                Late +{item.delay_minutes}m
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                On Time
+                              </span>
+                            )}
+                            {item.is_conflict && (
+                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                                ⚠ Conflict
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

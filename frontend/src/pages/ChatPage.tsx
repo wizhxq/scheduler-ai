@@ -15,8 +15,8 @@ declare global {
   }
 }
 
-// Tools that modify the schedule — after these run we reload the shared context
-// so CalendarPage and SchedulePage reflect changes immediately.
+// Tools that modify the schedule — after these run we do a full refresh so
+// CalendarPage and SchedulePage both reflect changes immediately.
 const SCHEDULE_MUTATING_TOOLS = new Set([
   'shift_work_order',
   'recompute_schedule',
@@ -25,6 +25,9 @@ const SCHEDULE_MUTATING_TOOLS = new Set([
   'update_work_order_deadline',
   'set_maintenance_window',
   'clear_maintenance',
+  'create_work_order',
+  'add_operation',
+  'change_work_order_priority',
 ])
 
 const SUGGESTIONS = [
@@ -55,19 +58,19 @@ function renderMarkdown(text: string): JSX.Element[] {
 }
 
 export default function ChatPage() {
-  const { load: reloadSchedule } = useSchedule()
+  const { refresh: refreshAll } = useSchedule()
 
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
       content:
-        `Hi! I\'m your AI scheduling assistant. I can help you:\n` +
+        `Hi! I'm your AI scheduling assistant. I can help you:\n` +
         `- Ask what time slots are free on any day\n` +
         `- Move a work order to a specific date & time\n` +
         `- Recommend and automatically book the best available slot\n` +
         `- Prepone / postpone orders and show cascading schedule impact\n` +
         `- Compute and summarise the production schedule\n\n` +
-        `Try: **"What\'s free on Monday?"** or **"Move WO-001 to Tuesday 10am"** or **"Find a slot for WO-002 tomorrow"**`,
+        `Try: **"What's free on Monday?"** or **"Move WO-001 to Tuesday 10am"** or **"Find a slot for WO-002 tomorrow"**`,
     },
   ])
   const [input,           setInput]           = useState('')
@@ -99,12 +102,11 @@ export default function ChatPage() {
         { role: 'assistant', content: res.reply, actions: res.actions_taken },
       ])
 
-      // If any action mutated the schedule, reload shared context so
-      // CalendarPage and SchedulePage update immediately without navigation.
+      // Full refresh (schedule + WOs + machines) after any mutating tool call
       const didMutate = (res.actions_taken || []).some(
         (act: any) => SCHEDULE_MUTATING_TOOLS.has(act.tool)
       )
-      if (didMutate) reloadSchedule()
+      if (didMutate) refreshAll()
 
     } catch (e: any) {
       setMessages(prev => [
@@ -114,7 +116,7 @@ export default function ChatPage() {
     } finally {
       setLoading(false)
     }
-  }, [loading, reloadSchedule])
+  }, [loading, refreshAll])
 
   const handleKey = (e: React.KeyboardEvent) => {
     if (e.key==='Enter' && !e.shiftKey) { e.preventDefault(); send(input) }

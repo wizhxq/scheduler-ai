@@ -1,23 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
-import { getWorkOrders, updateWorkOrder, getMachines, updateScheduleItem } from '../api'
+import { useState, useRef, useCallback } from 'react'
+import { updateWorkOrder, updateScheduleItem } from '../api'
 import { useSchedule } from '../context/ScheduleContext'
-
-// ---------------------------------------------------------------------------
-// Machine colour palette — 10 distinct hues, assigned by (machine_id % 10)
-// ---------------------------------------------------------------------------
-const MACHINE_COLORS = [
-  { bg: 'bg-violet-600',   border: 'border-violet-400',   label: 'bg-violet-800'  },
-  { bg: 'bg-cyan-600',     border: 'border-cyan-400',     label: 'bg-cyan-800'    },
-  { bg: 'bg-emerald-600',  border: 'border-emerald-400',  label: 'bg-emerald-800' },
-  { bg: 'bg-amber-500',    border: 'border-amber-400',    label: 'bg-amber-700'   },
-  { bg: 'bg-rose-600',     border: 'border-rose-400',     label: 'bg-rose-800'    },
-  { bg: 'bg-sky-500',      border: 'border-sky-400',      label: 'bg-sky-700'     },
-  { bg: 'bg-pink-600',     border: 'border-pink-400',     label: 'bg-pink-800'    },
-  { bg: 'bg-lime-600',     border: 'border-lime-400',     label: 'bg-lime-800'    },
-  { bg: 'bg-orange-600',   border: 'border-orange-400',   label: 'bg-orange-800'  },
-  { bg: 'bg-indigo-500',   border: 'border-indigo-400',   label: 'bg-indigo-700'  },
-]
-const machineColor = (machineId: number) => MACHINE_COLORS[machineId % MACHINE_COLORS.length]
+import { machineColor } from '../utils/machineColors'
 
 const P_COLOR: Record<number, { bg: string; border: string; text: string }> = {
   1: { bg: 'bg-red-600/80',    border: 'border-red-500',    text: 'text-white' },
@@ -33,7 +17,6 @@ type DragPayload =
   | { type: 'sched_group'; woId: number; items: any[]; anchorItem: any; anchorOffsetMs: number }
   | null
 
-// --- date helpers
 const addDays      = (d: Date, n: number) => { const c = new Date(d); c.setDate(c.getDate()+n); return c }
 const startOfWeek  = (d: Date) => {
   const c = new Date(d); const diff = c.getDay()===0 ? -6 : 1-c.getDay()
@@ -75,8 +58,9 @@ function groupByWO(items: any[]): Map<number, any[]> {
 }
 
 export default function CalendarPage() {
-  const [workOrders,  setWorkOrders]  = useState<any[]>([])
-  const [machines,    setMachines]    = useState<any[]>([])
+  // All data comes from shared context — never goes stale after mutations
+  const { schedule, workOrders, machines, load: reloadSchedule, refresh, setSchedule } = useSchedule()
+
   const [view,        setView]        = useState<View>('month')
   const [monthAnchor, setMonthAnchor] = useState(() => new Date())
   const [weekAnchor,  setWeekAnchor]  = useState(() => startOfWeek(new Date()))
@@ -88,22 +72,10 @@ export default function CalendarPage() {
   const [editTime,    setEditTime]    = useState('17:00')
   const [toast,       setToast]       = useState<string|null>(null)
 
-  // Shared schedule — same object SchedulePage reads; updating it here
-  // instantly updates the table on SchedulePage without any extra fetch.
-  const { schedule, load: reloadSchedule, setSchedule } = useSchedule()
-
   const dragRef = useRef<DragPayload>(null)
-
-  const loadLocal = useCallback(async () => {
-    const [wos, macs] = await Promise.all([getWorkOrders(), getMachines()])
-    setWorkOrders(wos); setMachines(macs)
-  }, [])
-
-  useEffect(() => { loadLocal() }, [loadLocal])
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(()=>setToast(null),3500) }
 
-  // navigation
   const goBack = () => {
     if (view==='month') setMonthAnchor(d=>new Date(d.getFullYear(),d.getMonth()-1,1))
     if (view==='week')  setWeekAnchor(d=>addDays(d,-7))
@@ -123,7 +95,7 @@ export default function CalendarPage() {
     return fmtShort(dayAnchor)
   }
 
-  // --- drop: move entire WO group by same delta, then sync shared context
+  // Drop handler — move entire WO group, then sync shared context
   const dropSchedGroup = async (newAnchorStart: Date) => {
     const payload = dragRef.current
     if (!payload || payload.type !== 'sched_group') return
@@ -144,8 +116,7 @@ export default function CalendarPage() {
         })
       }))
 
-      // Optimistically patch the shared context schedule so SchedulePage
-      // table updates immediately without a round-trip fetch.
+      // Optimistic patch of shared context — SchedulePage updates instantly
       if (schedule) {
         const updatedIds = new Set(updated.map((u: any) => u.id))
         const newItems = schedule.items.map((it: any) =>
@@ -154,12 +125,12 @@ export default function CalendarPage() {
         setSchedule({ ...schedule, items: newItems })
       }
 
-      showToast(`✅ ${anchorItem.work_order_name} rescheduled`)
-      // Also do a background re-fetch to pick up any server-side recalculations
+      showToast(`Rescheduled: ${anchorItem.work_order_name}`)
+      // Background re-fetch so every page is consistent
       reloadSchedule()
     } catch (err: any) {
       const msg = err?.response?.data?.detail || err?.message || 'Unknown error'
-      showToast(`❌ Reschedule failed: ${msg}`)
+      showToast(`Reschedule failed: ${msg}`)
     } finally {
       setSaving(null)
     }
@@ -176,9 +147,10 @@ export default function CalendarPage() {
     setSaving(wo.id)
     try {
       await updateWorkOrder(wo.id, { due_date: newDate.toISOString() })
-      showToast(`✅ ${wo.code} moved to ${fmtDate(newDate)}`)
-      await loadLocal()
-    } catch { showToast('❌ Failed to update.') }
+      showToast(`${wo.code} moved to ${fmtDate(newDate)}`)
+      // Refresh all data so calendar and schedule table are both current
+      await refresh()
+    } catch { showToast('Failed to update.') }
     finally { setSaving(null) }
   }
 
@@ -195,7 +167,6 @@ export default function CalendarPage() {
     }
   }
 
-  // edit modal
   const openEdit = (wo: any) => {
     setEditWO(wo)
     if (wo.due_date) {
@@ -210,19 +181,19 @@ export default function CalendarPage() {
     setSaving(editWO.id)
     try {
       await updateWorkOrder(editWO.id, { due_date: dt.toISOString() })
-      showToast(`✅ ${editWO.code} → ${fmtDate(dt)}`)
-      setEditWO(null); await loadLocal()
-    } catch { showToast('❌ Failed.') }
+      showToast(`${editWO.code} updated to ${fmtDate(dt)}`)
+      setEditWO(null)
+      await refresh()
+    } catch { showToast('Failed.') }
     finally { setSaving(null) }
   }
 
-  // data helpers
   const woOnDay         = (day: Date) => workOrders.filter(wo => wo.due_date && isSameDay(new Date(wo.due_date), day))
   const schedItemsOnDay = (day: Date) => (schedule?.items || []).filter((it: any) => isSameDay(new Date(it.start_time), day))
   const unscheduled     = workOrders.filter(wo => !wo.due_date && wo.status==='pending')
   const machMaintenance = machines.filter(m => m.status==='maintenance')
 
-  const woGroupsOnDay = (day: Date) => {
+  const woGroupsOnDay = useCallback((day: Date) => {
     const items = schedItemsOnDay(day)
     const grouped = groupByWO(items)
     return Array.from(grouped.entries()).map(([woId, its]) => ({
@@ -231,9 +202,8 @@ export default function CalendarPage() {
       color: machineColor(its[0].machine_id),
       woName: its[0].work_order_name,
     }))
-  }
+  }, [schedule])
 
-  // compact month/week chip
   const DayCell = ({ day, compact=false, dimmed=false }: { day:Date; compact?:boolean; dimmed?:boolean }) => {
     const key     = day.toISOString()
     const isToday = isSameDay(day, new Date())
@@ -269,7 +239,7 @@ export default function CalendarPage() {
               }}
               className={`px-1.5 py-0.5 rounded text-[10px] font-semibold cursor-grab select-none truncate border-l-2 ${g.color.border} ${g.color.bg}/70 text-white hover:opacity-80`}
             >
-              ⚙ {g.woName}
+              {g.woName}
             </div>
           ))}
           {wos.slice(0,compact?1:2).map(wo => {
@@ -318,18 +288,18 @@ export default function CalendarPage() {
           ${color.bg} ${color.border} ${isSav?'opacity-40':''} hover:brightness-110`}
       >
         <div className={`px-2 py-1 ${color.label} flex items-center gap-1.5 border-b border-white/20`}>
-          <span className="text-[10px]">⚙️</span>
           <span className="font-bold text-[12px] truncate">{woName}</span>
           {items.length>1 && <span className="ml-auto text-[9px] opacity-70 flex-shrink-0">{items.length} ops</span>}
         </div>
         <div className="px-2 py-1 space-y-0.5 overflow-hidden">
           {items.map(it=>(
             <div key={it.id} className="flex items-center gap-1.5 text-[10px] opacity-90">
+              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${machineColor(it.machine_id).dot}`} />
               <span className="opacity-60 truncate flex-1">{it.machine_name}</span>
               <span className="opacity-70 flex-shrink-0 font-mono tabular-nums">
-                {fmtTime(new Date(it.start_time))}–{fmtTime(new Date(it.end_time))}
+                {fmtTime(new Date(it.start_time))}-{fmtTime(new Date(it.end_time))}
               </span>
-              {it.is_late && <span className="text-red-300 flex-shrink-0">⚠️</span>}
+              {it.is_late && <span className="text-red-300 flex-shrink-0">!</span>}
             </div>
           ))}
         </div>
@@ -361,9 +331,9 @@ export default function CalendarPage() {
       setSaving(wo.id)
       try {
         await updateWorkOrder(wo.id, { due_date: newStart.toISOString() })
-        showToast(`✅ ${wo.code} due at ${fmtTime(newStart)}`)
-        await loadLocal()
-      } catch { showToast('❌ Failed.') }
+        showToast(`${wo.code} due at ${fmtTime(newStart)}`)
+        await refresh()
+      } catch { showToast('Failed.') }
       finally { setSaving(null) }
     }
 
@@ -409,7 +379,7 @@ export default function CalendarPage() {
               >
                 <span className="text-white font-bold">{wo.code}</span>
                 <span className="text-gray-400 ml-2">due {fmtTime(due)}</span>
-                {wo.customer_name&&<span className="text-gray-500 ml-2">· {wo.customer_name}</span>}
+                {wo.customer_name&&<span className="text-gray-500 ml-2">- {wo.customer_name}</span>}
               </div>
             )
           })}
@@ -425,14 +395,14 @@ export default function CalendarPage() {
 
   return (
     <div className="flex h-screen overflow-hidden">
-      {/* sidebar */}
+      {/* Sidebar */}
       <div className="w-52 bg-[#0b0e17] border-r border-white/5 flex flex-col flex-shrink-0">
         <div className="p-4 border-b border-white/5">
           <h2 className="text-white font-semibold text-sm">Unscheduled</h2>
           <p className="text-gray-500 text-xs mt-0.5">{unscheduled.length} pending</p>
         </div>
         <div className="flex-1 overflow-y-auto p-3 space-y-2">
-          {unscheduled.length===0&&<p className="text-gray-600 text-xs text-center mt-8">All orders scheduled ✅</p>}
+          {unscheduled.length===0&&<p className="text-gray-600 text-xs text-center mt-8">All orders scheduled</p>}
           {unscheduled.map(wo=>{
             const c=P_COLOR[wo.priority]||P_COLOR[3]
             return (
@@ -448,31 +418,34 @@ export default function CalendarPage() {
             )
           })}
         </div>
-        {schedule&&(
+
+        {/* Machine colour legend */}
+        {machines.length > 0 && (
           <div className="px-3 pt-2 pb-3 border-t border-white/5">
-            <p className="text-gray-500 text-[10px] font-semibold uppercase tracking-wider mb-2">⚙ Machine Legend</p>
-            {machines.slice(0,8).map(m=>{
-              const c=machineColor(m.id)
+            <p className="text-gray-500 text-[10px] font-semibold uppercase tracking-wider mb-2">Machine Colours</p>
+            {machines.map(m => {
+              const c = machineColor(m.id)
               return (
                 <div key={m.id} className="flex items-center gap-1.5 mb-1">
-                  <div className={`w-2.5 h-2.5 rounded-sm flex-shrink-0 ${c.bg}`}/>
+                  <div className={`w-2.5 h-2.5 rounded-sm flex-shrink-0 ${c.bg}`} />
                   <span className="text-gray-400 text-[10px] truncate">{m.name}</span>
                 </div>
               )
             })}
           </div>
         )}
-        {machMaintenance.length>0&&(
+
+        {machMaintenance.length > 0 && (
           <div className="p-3 border-t border-white/5">
-            <p className="text-amber-400 text-xs font-semibold mb-1">🔧 Maintenance</p>
+            <p className="text-amber-400 text-xs font-semibold mb-1">Maintenance</p>
             {machMaintenance.map(m=><p key={m.id} className="text-gray-500 text-xs truncate">{m.name}</p>)}
           </div>
         )}
       </div>
 
-      {/* main */}
+      {/* Main */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* toolbar */}
+        {/* Toolbar */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-white/5 bg-[#0b0e17] flex-shrink-0">
           <div className="flex items-center gap-2">
             <button onClick={goBack}    className="w-8 h-8 flex items-center justify-center bg-white/5 hover:bg-white/10 text-gray-300 rounded-lg">←</button>
@@ -572,9 +545,9 @@ export default function CalendarPage() {
                             setSaving(payload.data.id)
                             try{
                               await updateWorkOrder(payload.data.id,{due_date:ns.toISOString()})
-                              showToast(`✅ ${payload.data.code} → ${fmtTime(ns)}`)
-                              await loadLocal()
-                            }catch{showToast('❌ Failed.')}
+                              showToast(`${payload.data.code} moved`)
+                              await refresh()
+                            }catch{showToast('Failed.')}
                             finally{setSaving(null)}
                           }}
                         />
