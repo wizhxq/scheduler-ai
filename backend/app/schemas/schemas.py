@@ -40,13 +40,13 @@ class MachineOut(BaseModel):
     name: str
     status: MachineStatus
     created_at: datetime
-    shift_start: str = "08:00"
-    shift_end: str = "18:00"
-    shift_days: str = "1,2,3,4,5"
-    capacity_per_hour: float = 1.0
-    default_setup_minutes: int = 15
-    utilization_target_pct: float = 85.0
-    maintenance_notes: str = ""
+    shift_start: Optional[str] = "08:00"
+    shift_end: Optional[str] = "18:00"
+    shift_days: Optional[str] = "1,2,3,4,5"
+    capacity_per_hour: Optional[float] = 1.0
+    default_setup_minutes: Optional[int] = 15
+    utilization_target_pct: Optional[float] = 85.0
+    maintenance_notes: Optional[str] = ""
 
 
 # --- Work Order Schemas ---
@@ -73,17 +73,17 @@ class WorkOrderOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
     code: str
-    customer_name: Optional[str]
+    customer_name: Optional[str] = None
     priority: int
-    due_date: Optional[datetime]
+    due_date: Optional[datetime] = None
     status: WorkOrderStatus
     created_at: datetime
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     paused_at: Optional[datetime] = None
-    notes: str = ""
-    is_rush: bool = False
-    backward_schedule: bool = False
+    notes: Optional[str] = ""
+    is_rush: Optional[bool] = False
+    backward_schedule: Optional[bool] = False
     estimated_hours: Optional[float] = None
     actual_hours: Optional[float] = None
 
@@ -105,9 +105,9 @@ class OperationOut(BaseModel):
     machine_id: int
     sequence_no: int
     processing_minutes: int
-    setup_minutes: int
-    notes: str
-    status: str = "pending"
+    setup_minutes: Optional[int] = 0
+    notes: Optional[str] = ""
+    status: Optional[str] = "pending"
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     actual_minutes: Optional[int] = None
@@ -117,32 +117,36 @@ class OperationOut(BaseModel):
 class ScheduleItemOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
+    schedule_run_id: Optional[int] = None
     work_order_id: int
     operation_id: int
     machine_id: int
-    machine_name: str = ""
-    work_order_name: str = ""
+    machine_name: Optional[str] = ""
+    work_order_name: Optional[str] = ""
     start_time: datetime
     end_time: datetime
-    delay_minutes: int
-    is_late: bool = False
-    is_conflict: bool = False
+    delay_minutes: Optional[int] = 0
+    is_late: Optional[bool] = False
+    is_conflict: Optional[bool] = False
+    conflict_with_item_id: Optional[int] = None
 
 
 class ScheduleRunOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    schedule_run_id: int
-    run_label: str
-    algorithm: str = "EDD"
-    computed_at: datetime
+    id: int
     created_at: datetime
-    total_operations: int = 0
-    on_time_count: int = 0
-    late_count: int = 0
-    machine_utilization_pct: float = 0.0
-    has_conflicts: bool = False
-    conflict_details: str = ""
-    items: List[ScheduleItemOut]
+    label: Optional[str] = ""
+    algorithm: Optional[str] = "EDD"
+    end_time: Optional[datetime] = None
+    total_operations: Optional[int] = 0
+    total_delay_minutes: Optional[int] = 0
+    makespan_minutes: Optional[int] = 0
+    on_time_count: Optional[int] = 0
+    late_count: Optional[int] = 0
+    machine_utilization_pct: Optional[float] = 0.0
+    has_conflicts: Optional[bool] = False
+    conflict_details: Optional[str] = ""
+    items: List[ScheduleItemOut] = []
 
 
 # --- KPI Schema ---
