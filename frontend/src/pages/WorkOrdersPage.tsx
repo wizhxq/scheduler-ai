@@ -9,44 +9,50 @@ const PRIORITY_CONFIG: Record<number, { label: string; color: string; dot: strin
 }
 
 const STATUS_OPTIONS = [
-  { value: 'pending', label: 'Pending' },
+  { value: 'pending',     label: 'Pending' },
   { value: 'in_progress', label: 'In Progress' },
-  { value: 'paused', label: 'Paused' },
-  { value: 'completed', label: 'Completed' },
-  { value: 'on_hold', label: 'On Hold' },
-  { value: 'cancelled', label: 'Cancelled' },
+  { value: 'paused',      label: 'Paused' },
+  { value: 'completed',   label: 'Completed' },
+  { value: 'on_hold',     label: 'On Hold' },
+  { value: 'cancelled',   label: 'Cancelled' },
 ]
+
+// Duration stored per WO as { h: hours, m: minutes }
+type HM = { h: number; m: number }
+const hmToMins = (hm: HM) => hm.h * 60 + hm.m
+const DEFAULT_HM: HM = { h: 1, m: 0 }
 
 export default function WorkOrdersPage() {
   const [workOrders, setWorkOrders] = useState<any[]>([])
-  const [machines, setMachines] = useState<any[]>([])
+  const [machines,   setMachines]   = useState<any[]>([])
   const [operations, setOperations] = useState<Record<number, any[]>>({})
-  const [expanded, setExpanded] = useState<number | null>(null)
-  const [showForm, setShowForm] = useState(false)
+  const [expanded,   setExpanded]   = useState<number | null>(null)
+  const [showForm,   setShowForm]   = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null)
 
   // New WO form
-  const [code, setCode] = useState('')
+  const [code,         setCode]         = useState('')
   const [customerName, setCustomerName] = useState('')
-  const [dueDate, setDueDate] = useState('')
-  const [priority, setPriority] = useState(3)
+  const [dueDate,      setDueDate]      = useState('')
+  const [priority,     setPriority]     = useState(3)
 
-  // Per-WO operation form state
-  const [opMachineByWo, setOpMachineByWo] = useState<Record<number, number>>({})
-  const [opDurationByWo, setOpDurationByWo] = useState<Record<number, number>>({})
+  // Per-WO operation form: machine id + hours/minutes
+  const [opMachineByWo,  setOpMachineByWo]  = useState<Record<number, number>>({})
+  const [opDurationByWo, setOpDurationByWo] = useState<Record<number, HM>>({})
 
-  // Edit modal state
-  const [editWO, setEditWO] = useState<any | null>(null)
+  // Edit modal
+  const [editWO,       setEditWO]       = useState<any | null>(null)
   const [editCustomer, setEditCustomer] = useState('')
-  const [editDate, setEditDate] = useState('')
-  const [editTime, setEditTime] = useState('17:00')
+  const [editDate,     setEditDate]     = useState('')
+  const [editTime,     setEditTime]     = useState('17:00')
   const [editPriority, setEditPriority] = useState(3)
-  const [editStatus, setEditStatus] = useState('pending')
-  const [editRush, setEditRush] = useState(false)
-  const [editNotes, setEditNotes] = useState('')
-  const [editSaving, setEditSaving] = useState(false)
-  const [toast, setToast] = useState<string | null>(null)
+  const [editStatus,   setEditStatus]   = useState('pending')
+  const [editRush,     setEditRush]     = useState(false)
+  const [editNotes,    setEditNotes]    = useState('')
+  const [editSaving,   setEditSaving]   = useState(false)
+  const [toast,        setToast]        = useState<string | null>(null)
 
+  // ── load all work orders + machines ─────────────────────────────────────
   const load = async () => {
     const [wo, m] = await Promise.all([getWorkOrders(), getMachines()])
     setWorkOrders(wo)
@@ -59,7 +65,7 @@ export default function WorkOrdersPage() {
       })
       setOpDurationByWo(prev => {
         const next = { ...prev }
-        wo.forEach((w: any) => { if (!(w.id in next)) next[w.id] = 60 })
+        wo.forEach((w: any) => { if (!(w.id in next)) next[w.id] = DEFAULT_HM })
         return next
       })
     }
@@ -72,6 +78,7 @@ export default function WorkOrdersPage() {
     setTimeout(() => setToast(null), 3000)
   }
 
+  // reload the operations for one expanded WO
   const loadOps = async (woId: number) => {
     const ops = await getOperations(woId)
     setOperations(prev => ({ ...prev, [woId]: ops }))
@@ -82,6 +89,7 @@ export default function WorkOrdersPage() {
     else { setExpanded(id); loadOps(id) }
   }
 
+  // ── create work order ────────────────────────────────────────────────────
   const handleAddWO = async () => {
     if (!code.trim()) return
     await createWorkOrder({
@@ -96,6 +104,7 @@ export default function WorkOrdersPage() {
     await load()
   }
 
+  // ── delete whole work order ──────────────────────────────────────────────
   const handleDeleteWO = async (id: number) => {
     await deleteWorkOrder(id)
     setDeleteConfirm(null)
@@ -103,24 +112,33 @@ export default function WorkOrdersPage() {
     await load()
   }
 
+  // ── add a routing step ───────────────────────────────────────────────────
   const handleAddOp = async (woId: number) => {
     const machineId = opMachineByWo[woId] || (machines[0]?.id ?? 0)
-    const duration = opDurationByWo[woId] || 60
+    const hm        = opDurationByWo[woId] || DEFAULT_HM
+    const totalMins = Math.max(1, hmToMins(hm))
     const currentOps = operations[woId] || []
     await createOperation({
-      work_order_id: woId,
-      machine_id: machineId,
-      sequence_no: currentOps.length + 1,
-      processing_minutes: duration,
+      work_order_id:      woId,
+      machine_id:         machineId,
+      sequence_no:        currentOps.length + 1,
+      processing_minutes: totalMins,
     })
     await loadOps(woId)
+    // also refresh the top-level list so the step count badge updates
+    await load()
   }
 
-  const handleDeleteOp = async (woId: number, opId: number) => {
+  // ── delete a routing step ────────────────────────────────────────────────
+  // FIX: also call load() so the "N steps" count in the header row refreshes
+  const handleDeleteOp = async (e: React.MouseEvent, woId: number, opId: number) => {
+    e.stopPropagation()   // prevent the row expand toggle from firing
     await deleteOperation(opId)
-    await loadOps(woId)
+    await loadOps(woId)   // refresh the step list inside the expanded panel
+    await load()          // refresh the header badge that says "N steps"
   }
 
+  // ── edit modal helpers ───────────────────────────────────────────────────
   const openEdit = (e: React.MouseEvent, wo: any) => {
     e.stopPropagation()
     setEditWO(wo)
@@ -148,11 +166,11 @@ export default function WorkOrdersPage() {
         : null
       await updateWorkOrder(editWO.id, {
         due_date,
-        priority: editPriority,
-        status: editStatus,
+        priority:      editPriority,
+        status:        editStatus,
         customer_name: editCustomer || null,
-        is_rush: editRush,
-        notes: editNotes,
+        is_rush:       editRush,
+        notes:         editNotes,
       })
       showToast(`✅ ${editWO.code} updated`)
       setEditWO(null)
@@ -164,6 +182,17 @@ export default function WorkOrdersPage() {
     }
   }
 
+  // ── helpers for hours/minutes inputs ────────────────────────────────────
+  const setHours = (woId: number, val: string) => {
+    const h = Math.max(0, parseInt(val) || 0)
+    setOpDurationByWo(prev => ({ ...prev, [woId]: { ...(prev[woId] || DEFAULT_HM), h } }))
+  }
+  const setMins = (woId: number, val: string) => {
+    const m = Math.min(59, Math.max(0, parseInt(val) || 0))
+    setOpDurationByWo(prev => ({ ...prev, [woId]: { ...(prev[woId] || DEFAULT_HM), m } }))
+  }
+
+  // ── render ───────────────────────────────────────────────────────────────
   return (
     <div className="p-8 space-y-6">
       <div className="flex items-center justify-between">
@@ -177,6 +206,7 @@ export default function WorkOrdersPage() {
         </button>
       </div>
 
+      {/* ── New WO form ── */}
       {showForm && (
         <div className="bg-[#1a1f2e] border border-white/5 rounded-2xl p-6">
           <h2 className="text-white font-semibold mb-4 text-lg">New Work Order</h2>
@@ -214,18 +244,20 @@ export default function WorkOrdersPage() {
         </div>
       )}
 
+      {/* ── Work order list ── */}
       <div className="space-y-3">
         {workOrders.map((wo: any) => {
-          const config = PRIORITY_CONFIG[wo.priority] || PRIORITY_CONFIG[3]
+          const config    = PRIORITY_CONFIG[wo.priority] || PRIORITY_CONFIG[3]
           const isExpanded = expanded === wo.id
-          const ops = operations[wo.id] || []
-          const opMachine = opMachineByWo[wo.id] || (machines[0]?.id ?? 0)
-          const opDuration = opDurationByWo[wo.id] || 60
+          const ops        = operations[wo.id] || []
+          const opMachine  = opMachineByWo[wo.id] || (machines[0]?.id ?? 0)
+          const hm         = opDurationByWo[wo.id] || DEFAULT_HM
 
           return (
             <div key={wo.id} className={`bg-[#1a1f2e] border border-white/5 rounded-2xl overflow-hidden transition-all ${isExpanded ? 'ring-1 ring-blue-500/30' : 'hover:border-white/10'}`}>
+
+              {/* ── Header row ── */}
               <div className="p-5 flex items-center justify-between">
-                {/* Left */}
                 <div className="flex items-center gap-4 flex-1 cursor-pointer" onClick={() => handleExpand(wo.id)}>
                   <div className={`w-2 h-2 rounded-full flex-shrink-0 ${config.dot}`} />
                   <div>
@@ -237,8 +269,7 @@ export default function WorkOrdersPage() {
                     <p className="text-gray-500 text-xs mt-1">
                       Due: {wo.due_date
                         ? new Date(wo.due_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-                        : <span className="text-amber-500/70">Not scheduled</span>
-                      }
+                        : <span className="text-amber-500/70">Not scheduled</span>}
                       {wo.notes && <span className="ml-3 text-gray-600">· {wo.notes}</span>}
                     </p>
                   </div>
@@ -247,29 +278,21 @@ export default function WorkOrdersPage() {
                   </span>
                 </div>
 
-                {/* Right */}
                 <div className="flex items-center gap-3">
                   <div className="text-right cursor-pointer" onClick={() => handleExpand(wo.id)}>
-                    <p className="text-white text-xs font-semibold">{ops.length > 0 ? `${ops.length} steps` : '0 steps'}</p>
+                    <p className="text-white text-xs font-semibold">{wo.operation_count ?? ops.length} steps</p>
                     <p className="text-gray-500 text-[10px]">Operations</p>
                   </div>
 
-                  {/* Edit button */}
-                  <button
-                    onClick={e => openEdit(e, wo)}
-                    title="Edit work order"
-                    className="p-2 text-gray-500 hover:text-blue-400 hover:bg-blue-500/10 rounded-lg transition-colors"
-                  >
-                    ✏️
-                  </button>
+                  <button onClick={e => openEdit(e, wo)} title="Edit work order"
+                    className="p-2 text-gray-500 hover:text-blue-400 hover:bg-blue-500/10 rounded-lg transition-colors">✏️</button>
 
-                  {/* Delete */}
                   {deleteConfirm === wo.id ? (
                     <div className="flex gap-2">
                       <button onClick={e => { e.stopPropagation(); handleDeleteWO(wo.id) }}
-                        className="text-xs px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-lg transition-colors font-semibold">Confirm</button>
+                        className="text-xs px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-lg font-semibold">Confirm</button>
                       <button onClick={e => { e.stopPropagation(); setDeleteConfirm(null) }}
-                        className="text-xs px-3 py-1.5 bg-white/5 hover:bg-white/10 text-gray-300 rounded-lg transition-colors">Cancel</button>
+                        className="text-xs px-3 py-1.5 bg-white/5 hover:bg-white/10 text-gray-300 rounded-lg">Cancel</button>
                     </div>
                   ) : (
                     <button onClick={e => { e.stopPropagation(); setDeleteConfirm(wo.id) }}
@@ -281,16 +304,23 @@ export default function WorkOrdersPage() {
                 </div>
               </div>
 
+              {/* ── Expanded panel ── */}
               {isExpanded && (
                 <div className="border-t border-white/5 bg-[#141824] p-5 space-y-4">
                   <div className="flex items-center justify-between mb-2">
                     <h4 className="text-white font-semibold text-sm">Routing Steps</h4>
                     <p className="text-gray-500 text-[10px] uppercase">Process Flow</p>
                   </div>
+
                   {ops.length > 0 ? (
                     <div className="space-y-2">
                       {ops.slice().sort((a, b) => a.sequence_no - b.sequence_no).map((op) => {
                         const m = machines.find(mach => mach.id === op.machine_id)
+                        const hrs  = Math.floor(op.processing_minutes / 60)
+                        const mins = op.processing_minutes % 60
+                        const dur  = hrs > 0
+                          ? `${hrs}h ${mins > 0 ? mins + 'm' : ''}`.trim()
+                          : `${mins}m`
                         return (
                           <div key={op.id} className="flex items-center gap-3 bg-white/5 border border-white/5 rounded-xl p-3">
                             <div className="w-6 h-6 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center text-[10px] font-bold">{op.sequence_no}</div>
@@ -299,11 +329,16 @@ export default function WorkOrdersPage() {
                               <p className="text-gray-500 text-[10px] font-mono">{m?.code}</p>
                             </div>
                             <div className="text-right mr-4">
-                              <p className="text-gray-300 text-xs font-semibold">{op.processing_minutes} min</p>
-                              <p className="text-gray-500 text-[10px]">Duration</p>
+                              {/* Show duration as Xh Ym or Ym */}
+                              <p className="text-gray-300 text-xs font-semibold">{dur}</p>
+                              <p className="text-gray-500 text-[10px]">{op.processing_minutes} min</p>
                             </div>
-                            <button onClick={e => { e.stopPropagation(); handleDeleteOp(wo.id, op.id) }}
-                              className="p-2 text-gray-600 hover:text-red-400 transition-colors">✕</button>
+                            {/* FIX: pass the event so we can stopPropagation properly */}
+                            <button
+                              onClick={e => handleDeleteOp(e, wo.id, op.id)}
+                              className="p-2 text-gray-600 hover:text-red-400 transition-colors"
+                              title="Delete this step"
+                            >✕</button>
                           </div>
                         )
                       })}
@@ -313,9 +348,12 @@ export default function WorkOrdersPage() {
                       <p className="text-gray-500 text-xs italic">No operations defined. Add the first production step below.</p>
                     </div>
                   )}
+
+                  {/* ── Add step form ── */}
                   <div className="mt-6 pt-4 border-t border-white/5">
                     <h4 className="text-gray-400 text-[10px] font-bold uppercase tracking-widest mb-3">Add Production Step</h4>
                     <div className="flex items-end gap-3">
+                      {/* Machine select */}
                       <div className="flex-1">
                         <label className="block text-gray-500 text-[10px] mb-1">Select Machine</label>
                         <select value={opMachine}
@@ -326,12 +364,40 @@ export default function WorkOrdersPage() {
                           ))}
                         </select>
                       </div>
-                      <div className="w-24">
-                        <label className="block text-gray-500 text-[10px] mb-1">Mins</label>
-                        <input type="number" value={opDuration} min={1}
-                          onChange={e => setOpDurationByWo(prev => ({ ...prev, [wo.id]: Number(e.target.value) }))}
-                          className="w-full bg-[#0f1117] border border-white/10 rounded-lg px-3 py-2 text-white text-xs outline-none focus:border-blue-500/50" />
+
+                      {/* Hours input */}
+                      <div className="w-20">
+                        <label className="block text-gray-500 text-[10px] mb-1">Hours</label>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          value={hm.h === 0 ? '' : hm.h}
+                          placeholder="0"
+                          onChange={e => setHours(wo.id, e.target.value)}
+                          className="w-full bg-[#0f1117] border border-white/10 rounded-lg px-3 py-2 text-white text-xs outline-none focus:border-blue-500/50"
+                        />
                       </div>
+
+                      {/* Minutes input (0–59) */}
+                      <div className="w-20">
+                        <label className="block text-gray-500 text-[10px] mb-1">Minutes</label>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          value={hm.m === 0 ? '' : hm.m}
+                          placeholder="0"
+                          onChange={e => setMins(wo.id, e.target.value)}
+                          className="w-full bg-[#0f1117] border border-white/10 rounded-lg px-3 py-2 text-white text-xs outline-none focus:border-blue-500/50"
+                        />
+                      </div>
+
+                      {/* Total preview */}
+                      <div className="text-gray-600 text-[10px] pb-2 whitespace-nowrap">
+                        = {hmToMins(hm) || 0} min
+                      </div>
+
                       <button onClick={() => handleAddOp(wo.id)}
                         className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white text-xs font-bold rounded-lg transition-all">+ Add Step</button>
                     </div>
@@ -356,15 +422,12 @@ export default function WorkOrdersPage() {
             </div>
 
             <div className="space-y-4">
-              {/* Customer */}
               <div>
                 <label className="block text-gray-400 text-xs mb-1.5 font-semibold uppercase tracking-wider">Customer Name</label>
                 <input value={editCustomer} onChange={e => setEditCustomer(e.target.value)}
                   placeholder="e.g. Acme Corp"
                   className="w-full bg-[#0f1117] border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-blue-500/50" />
               </div>
-
-              {/* Due date + time side by side */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-gray-400 text-xs mb-1.5 font-semibold uppercase tracking-wider">Due Date</label>
@@ -377,8 +440,6 @@ export default function WorkOrdersPage() {
                     className="w-full bg-[#0f1117] border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:border-blue-500/50" />
                 </div>
               </div>
-
-              {/* Priority */}
               <div>
                 <label className="block text-gray-400 text-xs mb-1.5 font-semibold uppercase tracking-wider">Priority</label>
                 <div className="grid grid-cols-4 gap-2">
@@ -390,15 +451,11 @@ export default function WorkOrdersPage() {
                           editPriority === p
                             ? cfg.color + ' ring-2 ring-offset-1 ring-offset-[#1a1f2e] ring-current'
                             : 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10'
-                        }`}>
-                        {cfg.label}
-                      </button>
+                        }`}>{cfg.label}</button>
                     )
                   })}
                 </div>
               </div>
-
-              {/* Status */}
               <div>
                 <label className="block text-gray-400 text-xs mb-1.5 font-semibold uppercase tracking-wider">Status</label>
                 <select value={editStatus} onChange={e => setEditStatus(e.target.value)}
@@ -406,28 +463,20 @@ export default function WorkOrdersPage() {
                   {STATUS_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
                 </select>
               </div>
-
-              {/* Notes */}
               <div>
                 <label className="block text-gray-400 text-xs mb-1.5 font-semibold uppercase tracking-wider">Notes</label>
                 <input value={editNotes} onChange={e => setEditNotes(e.target.value)}
                   placeholder="Any notes about this order"
                   className="w-full bg-[#0f1117] border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-blue-500/50" />
               </div>
-
-              {/* Rush flag */}
               <div className="flex items-center justify-between bg-[#0f1117] border border-white/10 rounded-xl px-4 py-3">
                 <div>
                   <p className="text-white text-sm font-semibold">⚡ Rush Order</p>
                   <p className="text-gray-500 text-xs">Flags this as high-urgency for the scheduler</p>
                 </div>
                 <button onClick={() => setEditRush(r => !r)}
-                  className={`w-12 h-6 rounded-full transition-colors relative ${
-                    editRush ? 'bg-red-500' : 'bg-white/10'
-                  }`}>
-                  <span className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${
-                    editRush ? 'left-7' : 'left-1'
-                  }`} />
+                  className={`w-12 h-6 rounded-full transition-colors relative ${editRush ? 'bg-red-500' : 'bg-white/10'}`}>
+                  <span className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${editRush ? 'left-7' : 'left-1'}`} />
                 </button>
               </div>
             </div>
