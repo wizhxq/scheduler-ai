@@ -28,13 +28,7 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
-      content: `Hi! I'm your AI scheduling assistant. I can help you:
-- Add or list machines & work orders
-- Prepone / postpone orders and show the cascading impact
-- Compute and summarise the production schedule
-- Change priorities and deadlines
-
-You can type or use the 🎤 microphone button to speak to me.`
+      content: `Hi! I'm your AI scheduling assistant. I can help you:\n- Add or list machines & work orders\n- Prepone / postpone orders and show the cascading impact\n- Compute and summarise the production schedule\n- Change priorities and deadlines\nYou can type or use the microphone button to speak to me.`
     }
   ])
   const [input, setInput] = useState('')
@@ -62,7 +56,8 @@ You can type or use the 🎤 microphone button to speak to me.`
     return () => clearInterval(pulseRef.current)
   }, [isRecording])
 
-  const send = async (text: string) => {
+  // Stable `send` reference via useCallback so toggleVoice closure is never stale
+  const send = useCallback(async (text: string) => {
     if (!text.trim() || loading) return
     const userMsg: Message = { role: 'user', content: text }
     setMessages(prev => [...prev, userMsg])
@@ -83,7 +78,7 @@ You can type or use the 🎤 microphone button to speak to me.`
     } finally {
       setLoading(false)
     }
-  }
+  }, [loading])
 
   const handleKey = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -92,19 +87,18 @@ You can type or use the 🎤 microphone button to speak to me.`
     }
   }
 
+  // `send` in deps array ensures onend closure always calls the current version
   const toggleVoice = useCallback(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SpeechRecognition) {
       alert('Voice input is not supported in this browser. Please use Chrome or Edge.')
       return
     }
-
     if (isRecording) {
       recognitionRef.current?.stop()
       setIsRecording(false)
       return
     }
-
     const recognition = new SpeechRecognition()
     recognition.lang = 'en-US'
     recognition.interimResults = true
@@ -123,10 +117,11 @@ You can type or use the 🎤 microphone button to speak to me.`
 
     recognition.onend = () => {
       setIsRecording(false)
-      // Auto-send if we have a transcript
+      // Use functional updater to read latest input without stale closure,
+      // then dispatch to the stable `send` reference captured above.
       setInput(prev => {
         if (prev.trim()) {
-          setTimeout(() => send(prev), 100)
+          setTimeout(() => send(prev), 0)
         }
         return prev
       })
@@ -144,7 +139,7 @@ You can type or use the 🎤 microphone button to speak to me.`
     }
 
     recognition.start()
-  }, [isRecording])
+  }, [isRecording, send])
 
   const getActionColor = (tool: string) => {
     if (tool.includes('create') || tool.includes('add')) return 'text-green-400'
@@ -161,7 +156,7 @@ You can type or use the 🎤 microphone button to speak to me.`
         <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white text-sm font-bold">AI</div>
         <div>
           <h1 className="text-white font-semibold text-sm">Scheduling Assistant</h1>
-          <p className="text-gray-500 text-xs">Powered by Groq + Llama 3.3 · Voice &amp; Text</p>
+          <p className="text-gray-500 text-xs">Powered by Groq + Llama 3.3 · Voice & Text</p>
         </div>
         {isRecording && (
           <div className={`ml-auto flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium transition-all ${
@@ -183,7 +178,6 @@ You can type or use the 🎤 microphone button to speak to me.`
                 : 'bg-[#1a1f2e] text-gray-200 border border-white/10 rounded-tl-none py-3'
             }`}>
               <div className="whitespace-pre-wrap leading-relaxed text-sm">{m.content}</div>
-
               {/* Actions taken panel */}
               {m.actions && m.actions.length > 0 && (
                 <div className="mt-3 pt-3 border-t border-white/10">
@@ -208,7 +202,6 @@ You can type or use the 🎤 microphone button to speak to me.`
             </div>
           </div>
         ))}
-
         {loading && (
           <div className="flex justify-start">
             <div className="bg-[#1a1f2e] border border-white/10 rounded-2xl rounded-tl-none px-5 py-3">
@@ -244,7 +237,7 @@ You can type or use the 🎤 microphone button to speak to me.`
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKey}
-              placeholder={isRecording ? '🎤 Listening... speak now' : 'Type or speak your command...'}
+              placeholder={isRecording ? 'Listening... speak now' : 'Type or speak your command...'}
               className={`w-full text-gray-200 text-sm rounded-xl pl-4 pr-4 py-3 border outline-none resize-none transition-colors ${
                 isRecording
                   ? 'bg-red-950/30 border-red-500/50 focus:border-red-400'
@@ -253,7 +246,6 @@ You can type or use the 🎤 microphone button to speak to me.`
               rows={2}
             />
           </div>
-
           {/* Voice button */}
           <button
             onClick={toggleVoice}
@@ -272,7 +264,6 @@ You can type or use the 🎤 microphone button to speak to me.`
               <line x1="8" y1="23" x2="16" y2="23" />
             </svg>
           </button>
-
           {/* Send button */}
           <button
             onClick={() => send(input)}
