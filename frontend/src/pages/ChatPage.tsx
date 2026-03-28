@@ -17,7 +17,16 @@ const SUGGESTIONS = [
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([
-    { role: 'assistant', content: 'Hi! I can help you manage your machine schedule.\n\nAsk me to:\n- Compute a schedule\n- Adjust deadlines or priorities\n- Show work orders or machines\n- Explain what is running on each machine' }
+    { 
+      role: 'assistant', 
+      content: 'Hi! I can help you manage your machine schedule.
+
+Ask me to:
+- Compute a schedule
+- Adjust deadlines or priorities
+- Show work orders or machines
+- Explain what is running on each machine' 
+    }
   ])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -51,125 +60,78 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="flex flex-col h-screen">
-      {/* Header */}
-      <div className="px-8 py-5 border-b border-gray-800 flex items-center gap-3 flex-shrink-0">
-        <div className="w-9 h-9 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center">
-          <span className="text-lg">🤖</span>
-        </div>
-        <div>
-          <h1 className="text-white font-bold text-sm">AI Scheduling Assistant</h1>
-          <div className="flex items-center gap-1.5">
-            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            <p className="text-gray-500 text-xs">Powered by Groq + LLaMA 3 · Free</p>
-          </div>
-        </div>
-      </div>
-
+    <div className="flex flex-col h-screen max-h-screen bg-[#0f1117]">
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-8 py-6 space-y-4">
+      <div className="flex-1 overflow-y-auto p-6 space-y-6">
         {messages.map((m, i) => (
           <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            {m.role === 'assistant' && (
-              <div className="w-7 h-7 rounded-full bg-blue-600/20 border border-blue-500/30 flex items-center justify-center mr-3 mt-1 flex-shrink-0">
-                <span className="text-xs">🤖</span>
-              </div>
-            )}
-            <div className={`max-w-[75%] space-y-2`}>
-              <div
-                className={`rounded-2xl px-4 py-3 text-sm whitespace-pre-wrap leading-relaxed ${
-                  m.role === 'user'
-                    ? 'bg-blue-600 text-white rounded-br-md'
-                    : 'bg-gray-900 border border-gray-800 text-gray-200 rounded-bl-md'
-                }`}
-              >
-                {m.content}
-              </div>
-
-              {/* Tool actions taken */}
+            <div className={`max-w-[80%] rounded-2xl p-4 shadow-sm ${
+              m.role === 'user' 
+                ? 'bg-blue-600 text-white rounded-tr-none' 
+                : 'bg-[#1a1f2e] text-gray-200 border border-white/5 rounded-tl-none'
+            }`}>
+              <div className="whitespace-pre-wrap text-sm leading-relaxed">{m.content}</div>
               {m.actions && m.actions.length > 0 && (
-                <div className="space-y-1.5">
-                  {m.actions.map((action: any, ai: number) => (
-                    <div key={ai} className="flex items-center gap-2 bg-gray-900/60 border border-gray-800 rounded-xl px-3 py-2">
-                      <span className="text-blue-400 text-xs">⚡</span>
-                      <p className="text-gray-400 text-xs">
-                        <span className="text-blue-400 font-medium">{action.tool.replace(/_/g, ' ')}</span>
-                        {action.args && Object.keys(action.args).length > 0 && (
-                          <span className="text-gray-600"> · {Object.entries(action.args).map(([k,v]) => `${k}: ${v}`).join(', ')}</span>
-                        )}
-                      </p>
+                <div className="mt-3 pt-3 border-t border-white/10 space-y-1">
+                  <p className="text-[10px] text-gray-500 uppercase font-bold tracking-widest">Actions Executed</p>
+                  {m.actions.map((act: any, idx: number) => (
+                    <div key={idx} className="flex items-center gap-2 text-xs text-blue-400">
+                      <span>⚡</span> {act.type}: {act.description || JSON.stringify(act.data)}
                     </div>
                   ))}
                 </div>
               )}
             </div>
-            {m.role === 'user' && (
-              <div className="w-7 h-7 rounded-full bg-gray-700 flex items-center justify-center ml-3 mt-1 flex-shrink-0">
-                <span className="text-xs">👤</span>
-              </div>
-            )}
           </div>
         ))}
-
-        {/* Loading indicator */}
         {loading && (
           <div className="flex justify-start">
-            <div className="w-7 h-7 rounded-full bg-blue-600/20 border border-blue-500/30 flex items-center justify-center mr-3 mt-1 flex-shrink-0">
-              <span className="text-xs">🤖</span>
-            </div>
-            <div className="bg-gray-900 border border-gray-800 rounded-2xl rounded-bl-md px-4 py-3">
-              <div className="flex items-center gap-1.5">
-                <div className="w-1.5 h-1.5 rounded-full bg-gray-500 animate-bounce" style={{ animationDelay: '0ms' }} />
-                <div className="w-1.5 h-1.5 rounded-full bg-gray-500 animate-bounce" style={{ animationDelay: '150ms' }} />
-                <div className="w-1.5 h-1.5 rounded-full bg-gray-500 animate-bounce" style={{ animationDelay: '300ms' }} />
-              </div>
+            <div className="bg-[#1a1f2e] border border-white/5 rounded-2xl rounded-tl-none p-4 flex gap-2">
+              <span className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-bounce" />
+              <span className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-bounce [animation-delay:0.2s]" />
+              <span className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-bounce [animation-delay:0.4s]" />
             </div>
           </div>
         )}
         <div ref={bottomRef} />
       </div>
 
-      {/* Suggestions */}
-      {messages.length <= 1 && (
-        <div className="px-8 pb-4">
-          <p className="text-gray-600 text-xs mb-2">Try asking:</p>
-          <div className="flex flex-wrap gap-2">
-            {SUGGESTIONS.map(s => (
-              <button
-                key={s}
-                onClick={() => send(s)}
-                className="text-xs px-3 py-1.5 bg-gray-900 border border-gray-700 hover:border-gray-500 text-gray-400 hover:text-white rounded-xl transition-colors"
-              >
-                {s}
-              </button>
-            ))}
-          </div>
+      {/* Input Area */}
+      <div className="p-6 bg-[#0f1117] border-t border-white/5 space-y-4">
+        {/* Suggestions */}
+        <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-hide">
+          <p className="text-gray-500 text-[10px] uppercase font-bold mr-2 whitespace-nowrap">Try asking:</p>
+          {SUGGESTIONS.map(s => (
+            <button
+              key={s}
+              onClick={() => send(s)}
+              className="whitespace-nowrap px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/5 rounded-full text-gray-400 text-xs transition-colors"
+            >
+              {s}
+            </button>
+          ))}
         </div>
-      )}
 
-      {/* Input */}
-      <div className="px-8 pb-8 pt-3 flex-shrink-0">
-        <div className="flex gap-3 bg-gray-900 border border-gray-700 focus-within:border-blue-500 rounded-2xl p-3 transition-colors">
+        <div className="relative">
           <textarea
-            rows={1}
-            className="flex-1 bg-transparent text-white text-sm placeholder-gray-600 resize-none focus:outline-none leading-relaxed"
-            placeholder="Ask the AI to compute a schedule, adjust priorities, or explain your ops..."
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKey}
+            placeholder="Ask the AI to compute a schedule, adjust priorities, or explain your ops..."
+            className="w-full bg-[#1a1f2e] border border-white/10 rounded-2xl pl-4 pr-14 py-4 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-blue-500/50 resize-none h-14"
+            rows={1}
           />
           <button
             onClick={() => send(input)}
-            disabled={loading || !input.trim()}
-            className="w-9 h-9 flex-shrink-0 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl flex items-center justify-center transition-colors self-end"
+            disabled={!input.trim() || loading}
+            className="absolute right-3 top-2.5 p-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded-xl transition-all"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="22" y1="2" x2="11" y2="13" />
-              <polygon points="22 2 15 22 11 13 2 9 22 2" />
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
             </svg>
           </button>
         </div>
-        <p className="text-gray-700 text-xs mt-2 text-center">Press Enter to send · Shift+Enter for new line</p>
+        <p className="text-center text-[10px] text-gray-600">Press Enter to send · Shift+Enter for new line</p>
       </div>
     </div>
   )
