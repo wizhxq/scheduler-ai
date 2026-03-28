@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { getWorkOrders, updateWorkOrder, getMachines, getLatestSchedule, updateScheduleItem } from '../api'
 
-// ─── priority colour map ────────────────────────────────────────────────────
 const P_COLOR: Record<number, { bg: string; border: string; text: string }> = {
   1: { bg: 'bg-red-600/80',    border: 'border-red-500',    text: 'text-white' },
   2: { bg: 'bg-orange-500/80', border: 'border-orange-400', text: 'text-white' },
@@ -12,15 +11,9 @@ const P_LABEL: Record<number, string> = { 1:'Critical', 2:'High', 3:'Medium', 4:
 const SCHED_COLOR = 'bg-violet-600/80 border-violet-500'
 
 type View = 'month' | 'week' | 'day'
-
-// ─── drag payload stored in a ref (not state) ──────────────────────────────
-// KEY FIX: React state updates are asynchronous. When dragstart fires and sets
-// state, by the time onDrop fires React may have batched a re-render that
-// clears the state before the drop handler reads it. A ref is synchronous and
-// survives across the entire drag lifecycle without causing re-renders.
 type DragPayload = { type: 'wo' | 'sched'; data: any } | null
 
-// ─── date helpers ───────────────────────────────────────────────────────────
+// ─── date helpers ─────────────────────────────────────────────────────────
 const addDays      = (d: Date, n: number) => { const c = new Date(d); c.setDate(c.getDate()+n); return c }
 const startOfWeek  = (d: Date) => {
   const c = new Date(d); const diff = c.getDay()===0 ? -6 : 1-c.getDay()
@@ -39,19 +32,22 @@ function buildMonthGrid(anchor: Date): Date[] {
   return Array.from({length:42},(_,i)=>addDays(gs,i))
 }
 
-const HOUR_START  = 6
-const HOUR_END    = 22
-const TOTAL_HOURS = HOUR_END - HOUR_START
-const ROW_PX      = 56
+// ─── timeline constants ────────────────────────────────────────────────────
+// ROW_PX is the pixel height of each 1-hour row in the timeline.
+// Increased from 56 → 80 so text inside blocks is readable and blocks
+// don’t overlap each other when durations are short.
+const HOUR_START  = 7          // timeline starts at 07:00
+const HOUR_END    = 22          // timeline ends at 22:00
+const TOTAL_HOURS = HOUR_END - HOUR_START   // 15 hours visible
+const ROW_PX      = 80          // px per hour — tall enough to read labels
 
-function timeToTopPct(d: Date, dayDate: Date): number {
+function timeToTopPx(d: Date, dayDate: Date): number {
   const startOfDay = new Date(dayDate)
   startOfDay.setHours(HOUR_START, 0, 0, 0)
   const mins = (d.getTime() - startOfDay.getTime()) / 60000
-  return mins / (TOTAL_HOURS * 60)
+  return (mins / 60) * ROW_PX
 }
 
-// ─── main component ─────────────────────────────────────────────────────────
 export default function CalendarPage() {
   const [workOrders,  setWorkOrders]  = useState<any[]>([])
   const [machines,    setMachines]    = useState<any[]>([])
@@ -60,7 +56,6 @@ export default function CalendarPage() {
   const [monthAnchor, setMonthAnchor] = useState(() => new Date())
   const [weekAnchor,  setWeekAnchor]  = useState(() => startOfWeek(new Date()))
   const [dayAnchor,   setDayAnchor]   = useState(() => new Date())
-  // dragOver is fine as state — it only affects visual highlight, not the drop payload
   const [dragOver,    setDragOver]    = useState<string|null>(null)
   const [saving,      setSaving]      = useState<number|null>(null)
   const [editWO,      setEditWO]      = useState<any|null>(null)
@@ -68,7 +63,7 @@ export default function CalendarPage() {
   const [editTime,    setEditTime]    = useState('17:00')
   const [toast,       setToast]       = useState<string|null>(null)
 
-  // THE FIX: drag payload lives in a ref, never in state
+  // Drag payload in a ref so it survives re-renders during the drag lifecycle
   const dragRef = useRef<DragPayload>(null)
 
   const load = useCallback(async () => {
@@ -82,7 +77,7 @@ export default function CalendarPage() {
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(()=>setToast(null),3500) }
 
-  // ─── navigation ────────────────────────────────────────────────────────────
+  // ─── navigation
   const goBack = () => {
     if (view==='month') setMonthAnchor(d=>new Date(d.getFullYear(),d.getMonth()-1,1))
     if (view==='week')  setWeekAnchor(d=>addDays(d,-7))
@@ -102,19 +97,15 @@ export default function CalendarPage() {
     return fmtShort(dayAnchor)
   }
 
-  // ─── drop: move WO due-date to a calendar day ───────────────────────────
+  // ─── drop handlers
   const dropWOOnDay = async (day: Date) => {
     const payload = dragRef.current
     if (!payload || payload.type !== 'wo') return
     const wo = payload.data
     dragRef.current = null
     const newDate = new Date(day)
-    if (wo.due_date) {
-      const o = new Date(wo.due_date)
-      newDate.setHours(o.getHours(), o.getMinutes(), 0, 0)
-    } else {
-      newDate.setHours(17, 0, 0, 0)
-    }
+    if (wo.due_date) { const o=new Date(wo.due_date); newDate.setHours(o.getHours(),o.getMinutes(),0,0) }
+    else newDate.setHours(17,0,0,0)
     setSaving(wo.id)
     try {
       await updateWorkOrder(wo.id, { due_date: newDate.toISOString() })
@@ -124,7 +115,6 @@ export default function CalendarPage() {
     finally { setSaving(null) }
   }
 
-  // ─── drop: reschedule a schedule item to a new start time ───────────────
   const dropSchedItem = async (newStart: Date) => {
     const payload = dragRef.current
     if (!payload || payload.type !== 'sched') return
@@ -138,53 +128,55 @@ export default function CalendarPage() {
         start_time: newStart.toISOString(),
         end_time:   newEnd.toISOString(),
       })
-      showToast(`✅ ${item.work_order_name} rescheduled to ${fmtTime(newStart)}`)
+      showToast(`✅ ${item.work_order_name} → ${fmtTime(newStart)}`)
       await load()
-    } catch { showToast('❌ Failed to reschedule.') }
+    } catch (err: any) {
+      // Surface the actual server error message so we can debug
+      const msg = err?.response?.data?.detail || err?.message || 'Unknown error'
+      showToast(`❌ Reschedule failed: ${msg}`)
+    }
     finally { setSaving(null) }
   }
 
-  // ─── generic drop handler for month/week day cells ──────────────────────
   const handleCellDrop = async (e: React.DragEvent, day: Date) => {
     e.preventDefault(); setDragOver(null)
     const payload = dragRef.current
     if (!payload) return
     if (payload.type === 'wo') return dropWOOnDay(day)
-    // schedule item dropped on a day cell: keep same time, change the date
-    const orig     = new Date(payload.data.start_time)
-    const newStart = new Date(day)
-    newStart.setHours(orig.getHours(), orig.getMinutes(), 0, 0)
-    return dropSchedItem(newStart)
+    const orig = new Date(payload.data.start_time)
+    const ns   = new Date(day)
+    ns.setHours(orig.getHours(), orig.getMinutes(), 0, 0)
+    return dropSchedItem(ns)
   }
 
-  // ─── edit modal ─────────────────────────────────────────────────────────
+  // ─── edit modal
   const openEdit = (wo: any) => {
     setEditWO(wo)
     if (wo.due_date) {
-      const d = new Date(wo.due_date)
+      const d=new Date(wo.due_date)
       setEditDate(d.toISOString().split('T')[0])
       setEditTime(d.toTimeString().slice(0,5))
     } else { setEditDate(''); setEditTime('17:00') }
   }
   const saveEdit = async () => {
     if (!editWO||!editDate) return
-    const dt = new Date(`${editDate}T${editTime}:00`)
+    const dt=new Date(`${editDate}T${editTime}:00`)
     setSaving(editWO.id)
     try {
       await updateWorkOrder(editWO.id, { due_date: dt.toISOString() })
-      showToast(`✅ ${editWO.code} scheduled for ${fmtDate(dt)}`)
+      showToast(`✅ ${editWO.code} → ${fmtDate(dt)}`)
       setEditWO(null); await load()
     } catch { showToast('❌ Failed.') }
     finally { setSaving(null) }
   }
 
-  // ─── data helpers ────────────────────────────────────────────────────────
+  // ─── data helpers
   const woOnDay         = (day: Date) => workOrders.filter(wo => wo.due_date && isSameDay(new Date(wo.due_date), day))
   const schedItemsOnDay = (day: Date) => (schedule?.items || []).filter((it: any) => isSameDay(new Date(it.start_time), day))
   const unscheduled     = workOrders.filter(wo => !wo.due_date && wo.status==='pending')
   const machMaintenance = machines.filter(m => m.status==='maintenance')
 
-  // ─── month/week day cell ─────────────────────────────────────────────────
+  // ─── month/week day cell (compact chips, no timeline)
   const DayCell = ({ day, compact=false, dimmed=false }: { day:Date; compact?:boolean; dimmed?:boolean }) => {
     const key     = day.toISOString()
     const isToday = isSameDay(day, new Date())
@@ -198,7 +190,7 @@ export default function CalendarPage() {
         onDrop={e      => handleCellDrop(e, day)}
         className={`border border-white/5 flex flex-col transition-colors ${
           isTarget ? 'bg-blue-900/25 border-blue-500/40' : dimmed ? 'bg-[#0b0e17]' : 'bg-[#0f1117]'
-        } ${compact ? 'min-h-[100px]' : 'min-h-[120px]'}`}
+        } ${compact ? 'min-h-[110px]' : 'min-h-[130px]'}`}
       >
         <div className={`px-2 pt-2 pb-1 flex items-center justify-between ${isToday?'bg-blue-600/20':''}`}>
           <span className={`text-xs font-bold w-6 h-6 flex items-center justify-center rounded-full ${
@@ -211,16 +203,15 @@ export default function CalendarPage() {
           )}
         </div>
         <div className="flex-1 px-1.5 pb-1.5 space-y-0.5 overflow-hidden">
-          {sitems.slice(0, compact?1:2).map((it:any) => (
-            <div key={`si-${it.id}`}
-              draggable
+          {sitems.slice(0,compact?1:3).map((it:any) => (
+            <div key={`si-${it.id}`} draggable
               onDragStart={e => { e.stopPropagation(); dragRef.current = { type:'sched', data:it } }}
               className={`px-1.5 py-0.5 rounded text-[10px] font-semibold cursor-grab select-none truncate border ${SCHED_COLOR} text-white hover:opacity-80`}
             >
               ⚙ {it.work_order_name} {fmtTime(new Date(it.start_time))}
             </div>
           ))}
-          {wos.slice(0,compact?1:2).map(wo => {
+          {wos.slice(0,compact?1:3).map(wo => {
             const c = P_COLOR[wo.priority]||P_COLOR[3]
             return (
               <div key={wo.id} draggable
@@ -232,41 +223,36 @@ export default function CalendarPage() {
               </div>
             )
           })}
-          {(sitems.length+wos.length) > (compact?2:4) && (
-            <div className="text-[9px] text-gray-500 pl-1">+{(sitems.length+wos.length)-(compact?2:4)} more</div>
+          {(sitems.length+wos.length) > (compact?2:6) && (
+            <div className="text-[9px] text-gray-500 pl-1">+{(sitems.length+wos.length)-(compact?2:6)} more</div>
           )}
-          {isTarget && (
-            <div className="border border-dashed border-blue-400/40 rounded text-[10px] text-blue-400 text-center py-0.5">Drop here</div>
-          )}
+          {isTarget && <div className="border border-dashed border-blue-400/40 rounded text-[10px] text-blue-400 text-center py-0.5">Drop here</div>}
         </div>
       </div>
     )
   }
 
-  // ─── day timeline view ────────────────────────────────────────────────────
+  // ─── day timeline view (tall, scrollable, readable)
   const DayTimeline = ({ day }: { day: Date }) => {
     const timelineRef = useRef<HTMLDivElement>(null)
-    const hours    = Array.from({length: TOTAL_HOURS}, (_,i) => HOUR_START + i)
-    const sitems   = schedItemsOnDay(day)
-    const wos      = woOnDay(day)
-    const totalPx  = TOTAL_HOURS * ROW_PX
+    const hours   = Array.from({length: TOTAL_HOURS}, (_,i) => HOUR_START + i)
+    const sitems  = schedItemsOnDay(day)
+    const wos     = woOnDay(day)
+    const totalPx = TOTAL_HOURS * ROW_PX
 
     const handleTimelineDrop = async (e: React.DragEvent) => {
       e.preventDefault()
       const payload = dragRef.current
       if (!payload || !timelineRef.current) return
-      // Calculate which time slot the user dropped onto based on Y position
       const rect    = timelineRef.current.getBoundingClientRect()
-      const relY    = e.clientY - rect.top
-      const fracY   = Math.max(0, Math.min(relY / totalPx, 1))
-      const totalMins = fracY * TOTAL_HOURS * 60
-      const snapped   = Math.round(totalMins / 15) * 15  // snap to 15-min grid
-      const newStart  = new Date(day)
+      const relY    = Math.max(0, e.clientY - rect.top)
+      const fracY   = Math.min(relY / totalPx, 1)
+      const snapped = Math.round((fracY * TOTAL_HOURS * 60) / 15) * 15
+      const newStart = new Date(day)
       newStart.setHours(HOUR_START, 0, 0, 0)
       newStart.setMinutes(newStart.getMinutes() + snapped)
 
       if (payload.type === 'sched') return dropSchedItem(newStart)
-      // WO dropped on timeline: update its due_date to that time
       dragRef.current = null
       const wo = payload.data
       setSaving(wo.id)
@@ -278,75 +264,89 @@ export default function CalendarPage() {
       finally { setSaving(null) }
     }
 
-    const nowLine = (() => {
-      if (!isSameDay(day, new Date())) return null
-      const top = timeToTopPct(new Date(), day) * totalPx
+    const nowLine = isSameDay(day, new Date()) ? (() => {
+      const top = timeToTopPx(new Date(), day)
       return (
-        <div className="absolute left-0 right-0 z-20 flex items-center" style={{top}}>
-          <div className="w-2 h-2 rounded-full bg-red-500 -ml-1 flex-shrink-0" />
-          <div className="flex-1 border-t border-red-500 border-dashed opacity-70" />
+        <div className="absolute left-0 right-0 z-20 flex items-center pointer-events-none" style={{top}}>
+          <div className="w-2.5 h-2.5 rounded-full bg-red-500 -ml-1.5 flex-shrink-0 shadow-lg shadow-red-500/50" />
+          <div className="flex-1 border-t-2 border-red-500 opacity-80" />
         </div>
       )
-    })()
+    })() : null
 
     return (
-      <div className="flex h-full">
-        <div className="w-14 flex-shrink-0 border-r border-white/5 select-none">
-          {hours.map(h=>(
-            <div key={h} style={{height:ROW_PX}} className="flex items-start pt-1 pr-2 justify-end">
-              <span className="text-[10px] text-gray-600 font-mono">{String(h).padStart(2,'0')}:00</span>
+      <div className="flex" style={{height: totalPx}}>
+        {/* hour labels column — fixed width */}
+        <div className="w-16 flex-shrink-0 border-r border-white/5 select-none bg-[#0b0e17]">
+          {hours.map(h => (
+            <div key={h} style={{height: ROW_PX}}
+              className="flex items-start pt-2 pr-3 justify-end border-b border-white/[0.04]">
+              <span className="text-xs text-gray-500 font-mono tabular-nums">
+                {String(h).padStart(2,'0')}:00
+              </span>
             </div>
           ))}
         </div>
-        <div ref={timelineRef} className="flex-1 relative"
-          style={{height:totalPx, minHeight:totalPx}}
+
+        {/* event area */}
+        <div ref={timelineRef} className="flex-1 relative bg-[#0f1117]"
+          style={{height: totalPx}}
           onDragOver={e => e.preventDefault()}
           onDrop={handleTimelineDrop}
         >
-          {hours.map(h=>(
-            <div key={h} style={{top:(h-HOUR_START)*ROW_PX,height:ROW_PX}}
-              className="absolute inset-x-0 border-b border-white/5" />
+          {/* hour grid lines */}
+          {hours.map(h => (
+            <div key={h}
+              style={{top:(h-HOUR_START)*ROW_PX, height: ROW_PX}}
+              className="absolute inset-x-0 border-b border-white/[0.06]" />
           ))}
-          {hours.map(h=>(
-            <div key={`hh-${h}`} style={{top:(h-HOUR_START)*ROW_PX+ROW_PX/2,height:1}}
+          {/* 30-min half-hour lines */}
+          {hours.map(h => (
+            <div key={`hh-${h}`}
+              style={{top:(h-HOUR_START)*ROW_PX + ROW_PX/2, height:1}}
               className="absolute inset-x-0 border-b border-white/[0.03]" />
           ))}
+
           {nowLine}
 
+          {/* schedule operation blocks */}
           {sitems.map((it:any) => {
-            const st   = new Date(it.start_time)
-            const en   = new Date(it.end_time)
-            const top  = timeToTopPct(st, day) * totalPx
-            const ht   = Math.max(20, (en.getTime()-st.getTime())/60000/60*ROW_PX)
+            const st  = new Date(it.start_time)
+            const en  = new Date(it.end_time)
+            const top = timeToTopPx(st, day)
+            // minimum height 28px so even very short ops are visible
+            const ht  = Math.max(28, timeToTopPx(en, day) - top)
             return (
-              <div key={it.id}
-                draggable
+              <div key={it.id} draggable
                 onDragStart={() => { dragRef.current = { type:'sched', data:it } }}
-                style={{top, height:ht, left:'2px', right:'2px'}}
-                className={`absolute rounded-lg border text-white text-[10px] p-1.5 cursor-grab select-none overflow-hidden ${SCHED_COLOR} ${saving===it.id?'opacity-40':''} hover:brightness-110 z-10`}
+                style={{top, height: ht, left: 6, right: 6}}
+                className={`absolute rounded-xl border-2 text-white text-xs p-2 cursor-grab select-none overflow-hidden ${
+                  SCHED_COLOR
+                } ${saving===it.id?'opacity-40':''} hover:brightness-110 z-10 shadow-lg`}
               >
-                <div className="font-bold truncate">⚙ {it.work_order_name}</div>
-                <div className="opacity-70">{it.machine_name}</div>
-                <div className="opacity-60">{fmtTime(st)} – {fmtTime(en)}</div>
-                {it.is_late && <div className="text-red-300 text-[9px]">⚠ Late +{it.delay_minutes}m</div>}
+                <div className="font-bold truncate text-sm">⚙️ {it.work_order_name}</div>
+                <div className="opacity-75 text-[11px] mt-0.5">{it.machine_name}</div>
+                <div className="opacity-60 text-[11px]">{fmtTime(st)} – {fmtTime(en)}</div>
+                {it.is_late && <div className="text-red-300 text-[10px] mt-0.5">⚠️ Late +{it.delay_minutes}m</div>}
               </div>
             )
           })}
 
+          {/* WO due-date marker lines */}
           {wos.map(wo => {
             const due = new Date(wo.due_date)
-            const top = timeToTopPct(due, day) * totalPx
+            const top = timeToTopPx(due, day)
             const c   = P_COLOR[wo.priority]||P_COLOR[3]
             return (
-              <div key={wo.id}
-                draggable
+              <div key={wo.id} draggable
                 onDragStart={() => { dragRef.current = { type:'wo', data:wo } }}
                 onClick={() => openEdit(wo)}
-                style={{top, left:'2px', right:'2px'}}
-                className={`absolute border-l-4 ${c.border} bg-white/5 rounded-r-lg px-2 py-0.5 text-[10px] cursor-grab select-none hover:bg-white/10 z-10`}
+                style={{top, left: 6, right: 6}}
+                className={`absolute border-l-4 ${c.border} bg-white/5 rounded-r-xl px-3 py-1 text-xs cursor-grab select-none hover:bg-white/10 z-10`}
               >
-                <span className="text-white font-semibold">{wo.code}</span>
-                <span className="text-gray-400 ml-1">due {fmtTime(due)}</span>
+                <span className="text-white font-bold">{wo.code}</span>
+                <span className="text-gray-400 ml-2">due {fmtTime(due)}</span>
+                {wo.customer_name && <span className="text-gray-500 ml-2">· {wo.customer_name}</span>}
               </div>
             )
           })}
@@ -355,15 +355,15 @@ export default function CalendarPage() {
     )
   }
 
-  // ─── grid data ───────────────────────────────────────────────────────────
   const monthDays = buildMonthGrid(monthAnchor)
   const weekDays  = Array.from({length:7},(_,i)=>addDays(weekAnchor,i))
   const WEEK_H    = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
+  const totalTimelinePx = TOTAL_HOURS * ROW_PX
 
   return (
     <div className="flex h-screen overflow-hidden">
 
-      {/* ─── sidebar ─── */}
+      {/* sidebar */}
       <div className="w-52 bg-[#0b0e17] border-r border-white/5 flex flex-col flex-shrink-0">
         <div className="p-4 border-b border-white/5">
           <h2 className="text-white font-semibold text-sm">Unscheduled</h2>
@@ -387,10 +387,9 @@ export default function CalendarPage() {
           })}
         </div>
         {schedule && (
-          <div className="px-3 pt-2 border-t border-white/5">
+          <div className="px-3 pt-2 pb-3 border-t border-white/5">
             <p className="text-gray-500 text-[10px] font-semibold uppercase tracking-wider mb-1">⚙ Schedule</p>
             <p className="text-gray-500 text-[10px]">{schedule.algorithm} · {schedule.total_operations} ops</p>
-            <p className="text-gray-600 text-[10px]">{new Date(schedule.created_at).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</p>
           </div>
         )}
         {machMaintenance.length>0 && (
@@ -401,34 +400,34 @@ export default function CalendarPage() {
         )}
       </div>
 
-      {/* ─── main area ─── */}
+      {/* main */}
       <div className="flex-1 flex flex-col overflow-hidden">
 
         {/* toolbar */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-white/5 bg-[#0b0e17] flex-shrink-0">
           <div className="flex items-center gap-2">
-            <button onClick={goBack}    className="w-8 h-8 flex items-center justify-center bg-white/5 hover:bg-white/10 text-gray-300 rounded-lg text-sm">←</button>
+            <button onClick={goBack}    className="w-8 h-8 flex items-center justify-center bg-white/5 hover:bg-white/10 text-gray-300 rounded-lg">←</button>
             <button onClick={goToday}   className="px-3 h-8 bg-white/5 hover:bg-white/10 text-gray-300 text-xs font-semibold rounded-lg">Today</button>
-            <button onClick={goForward} className="w-8 h-8 flex items-center justify-center bg-white/5 hover:bg-white/10 text-gray-300 rounded-lg text-sm">→</button>
+            <button onClick={goForward} className="w-8 h-8 flex items-center justify-center bg-white/5 hover:bg-white/10 text-gray-300 rounded-lg">→</button>
             <span className="text-white font-semibold text-sm ml-2">{navLabel()}</span>
           </div>
           <div className="flex items-center gap-1">
             {(['month','week','day'] as View[]).map(v=>(
               <button key={v} onClick={()=>setView(v)}
-                className={`px-3 h-8 text-xs font-semibold rounded-lg capitalize transition-colors ${
+                className={`px-3 h-8 text-xs font-semibold rounded-lg capitalize ${
                   view===v ? 'bg-blue-600 text-white' : 'bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white'
                 }`}>{v}</button>
             ))}
           </div>
         </div>
 
-        {/* ── Month view ── */}
+        {/* ── Month ── */}
         {view==='month' && (
           <div className="flex-1 overflow-auto flex flex-col">
             <div className="grid grid-cols-7 border-b border-white/5 flex-shrink-0">
               {WEEK_H.map(h=><div key={h} className="py-2 text-center text-[10px] font-bold uppercase tracking-widest text-gray-600">{h}</div>)}
             </div>
-            <div className="flex-1 grid grid-cols-7" style={{gridAutoRows:'minmax(110px,1fr)'}}>
+            <div className="flex-1 grid grid-cols-7" style={{gridAutoRows:'minmax(130px,1fr)'}}>
               {monthDays.map(day=>(
                 <DayCell key={day.toISOString()} day={day} compact dimmed={day.getMonth()!==monthAnchor.getMonth()} />
               ))}
@@ -436,14 +435,15 @@ export default function CalendarPage() {
           </div>
         )}
 
-        {/* ── Week view ── */}
+        {/* ── Week ── */}
         {view==='week' && (
-          <div className="flex-1 overflow-auto flex flex-col">
-            <div className="grid grid-cols-7 border-b border-white/5 flex-shrink-0 pl-14">
+          <div className="flex-1 overflow-hidden flex flex-col">
+            {/* day header row */}
+            <div className="grid grid-cols-7 border-b border-white/5 flex-shrink-0" style={{marginLeft: 64}}>
               {weekDays.map(day => {
                 const isToday = isSameDay(day, new Date())
                 return (
-                  <div key={day.toISOString()} className={`py-2 text-center ${isToday?'bg-blue-600/10':''}`}>
+                  <div key={day.toISOString()} className={`py-2 text-center border-r border-white/5 ${isToday?'bg-blue-600/10':''}`}>
                     <p className={`text-[10px] font-bold uppercase tracking-widest ${isToday?'text-blue-400':'text-gray-600'}`}>
                       {day.toLocaleDateString('en-GB',{weekday:'short'})}
                     </p>
@@ -452,68 +452,95 @@ export default function CalendarPage() {
                 )
               })}
             </div>
-            <div className="flex-1 overflow-auto">
-              <div className="flex" style={{minHeight: TOTAL_HOURS*ROW_PX}}>
-                <div className="w-14 flex-shrink-0 border-r border-white/5">
+
+            {/* scrollable timeline */}
+            <div className="flex-1 overflow-y-auto overflow-x-auto">
+              <div className="flex" style={{height: totalTimelinePx, minWidth: 700}}>
+                {/* hour labels */}
+                <div className="w-16 flex-shrink-0 border-r border-white/5 bg-[#0b0e17]">
                   {Array.from({length:TOTAL_HOURS},(_,i)=>HOUR_START+i).map(h=>(
-                    <div key={h} style={{height:ROW_PX}} className="flex items-start pt-1 pr-2 justify-end">
-                      <span className="text-[10px] text-gray-600 font-mono">{String(h).padStart(2,'0')}:00</span>
+                    <div key={h} style={{height:ROW_PX}}
+                      className="flex items-start pt-2 pr-3 justify-end border-b border-white/[0.04]">
+                      <span className="text-xs text-gray-500 font-mono">{String(h).padStart(2,'0')}:00</span>
                     </div>
                   ))}
                 </div>
+
+                {/* 7 day columns */}
                 <div className="flex-1 grid grid-cols-7">
                   {weekDays.map(day => (
-                    <div key={day.toISOString()} className="border-r border-white/5 relative" style={{height:TOTAL_HOURS*ROW_PX}}>
+                    <div key={day.toISOString()}
+                      className="border-r border-white/5 relative bg-[#0f1117]"
+                      style={{height: totalTimelinePx}}
+                    >
+                      {/* hour lines */}
                       {Array.from({length:TOTAL_HOURS},(_,i)=>(
-                        <div key={i} style={{top:i*ROW_PX,height:ROW_PX}} className="absolute inset-x-0 border-b border-white/5" />
+                        <div key={i} style={{top:i*ROW_PX, height:ROW_PX}}
+                          className="absolute inset-x-0 border-b border-white/[0.06]" />
                       ))}
+                      {/* half-hour lines */}
+                      {Array.from({length:TOTAL_HOURS},(_,i)=>(
+                        <div key={`hh-${i}`} style={{top:i*ROW_PX+ROW_PX/2, height:1}}
+                          className="absolute inset-x-0 border-b border-white/[0.03]" />
+                      ))}
+
+                      {/* schedule blocks */}
                       {schedItemsOnDay(day).map((it:any) => {
-                        const st  = new Date(it.start_time); const en = new Date(it.end_time)
-                        const top = timeToTopPct(st,day)*(TOTAL_HOURS*ROW_PX)
-                        const ht  = Math.max(18,(en.getTime()-st.getTime())/60000/60*ROW_PX)
+                        const st  = new Date(it.start_time)
+                        const en  = new Date(it.end_time)
+                        const top = timeToTopPx(st, day)
+                        const ht  = Math.max(24, timeToTopPx(en, day) - top)
                         return (
                           <div key={it.id} draggable
                             onDragStart={() => { dragRef.current = { type:'sched', data:it } }}
-                            style={{top,height:ht,left:1,right:1}}
-                            className={`absolute rounded text-[9px] p-1 cursor-grab ${SCHED_COLOR} text-white overflow-hidden z-10 hover:brightness-110 ${saving===it.id?'opacity-40':''}`}
+                            style={{top, height:ht, left:2, right:2}}
+                            className={`absolute rounded-lg border text-[10px] p-1.5 cursor-grab ${SCHED_COLOR} text-white overflow-hidden z-10 hover:brightness-110 ${saving===it.id?'opacity-40':''}`}
                           >
                             <div className="font-bold truncate">{it.work_order_name}</div>
-                            <div className="opacity-60">{fmtTime(st)}</div>
+                            <div className="opacity-60 text-[9px]">{fmtTime(st)} – {fmtTime(en)}</div>
                           </div>
                         )
                       })}
+
+                      {/* WO due markers */}
                       {woOnDay(day).map(wo => {
                         const due = new Date(wo.due_date)
-                        const top = timeToTopPct(due,day)*(TOTAL_HOURS*ROW_PX)
+                        const top = timeToTopPx(due, day)
                         const c   = P_COLOR[wo.priority]||P_COLOR[3]
                         return (
                           <div key={wo.id} draggable
                             onDragStart={() => { dragRef.current = { type:'wo', data:wo } }}
-                            style={{top,left:1,right:1}}
-                            className={`absolute border-l-2 ${c.border} bg-white/5 rounded-r px-1 text-[9px] cursor-grab z-10`}
+                            style={{top, left:2, right:2}}
+                            className={`absolute border-l-2 ${c.border} bg-white/5 rounded-r px-1 py-0.5 text-[10px] cursor-grab z-10`}
                           >
-                            <span className="text-white font-semibold truncate">{wo.code}</span>
+                            <span className="text-white font-semibold">{wo.code}</span>
+                            <span className="text-gray-400 ml-1">{fmtTime(due)}</span>
                           </div>
                         )
                       })}
-                      {/* transparent drop zone covering the entire column */}
+
+                      {/* transparent drop overlay */}
                       <div className="absolute inset-0 z-0"
-                        onDragOver={e  => { e.preventDefault(); setDragOver(day.toISOString()+'week') }}
+                        onDragOver={e  => { e.preventDefault(); setDragOver(day.toISOString()+'w') }}
                         onDragLeave={() => setDragOver(null)}
                         onDrop={async e => {
                           e.preventDefault(); setDragOver(null)
                           const payload = dragRef.current
                           if (!payload) return
                           const rect   = (e.currentTarget as HTMLElement).getBoundingClientRect()
-                          const relY   = e.clientY - rect.top
-                          const frac   = Math.max(0, Math.min(relY/(TOTAL_HOURS*ROW_PX), 1))
+                          const relY   = Math.max(0, e.clientY - rect.top)
+                          const frac   = Math.min(relY / totalTimelinePx, 1)
                           const mins   = Math.round(frac*TOTAL_HOURS*60/15)*15
                           const ns     = new Date(day); ns.setHours(HOUR_START,0,0,0); ns.setMinutes(ns.getMinutes()+mins)
                           if (payload.type==='sched') return dropSchedItem(ns)
                           dragRef.current = null
-                          await updateWorkOrder(payload.data.id, { due_date: ns.toISOString() })
-                          showToast(`✅ ${payload.data.code} → ${fmtTime(ns)}`)
-                          await load()
+                          setSaving(payload.data.id)
+                          try {
+                            await updateWorkOrder(payload.data.id, { due_date: ns.toISOString() })
+                            showToast(`✅ ${payload.data.code} → ${fmtTime(ns)}`)
+                            await load()
+                          } catch { showToast('❌ Failed.') }
+                          finally { setSaving(null) }
                         }}
                       />
                     </div>
@@ -524,22 +551,22 @@ export default function CalendarPage() {
           </div>
         )}
 
-        {/* ── Day view ── */}
+        {/* ── Day ── */}
         {view==='day' && (
-          <div className="flex-1 overflow-auto">
+          <div className="flex-1 overflow-y-auto">
             <div className="px-5 pt-4 pb-2">
-              <p className={`font-semibold text-sm ${isSameDay(dayAnchor,new Date())?'text-blue-400':'text-gray-400'}`}>
+              <p className={`font-semibold text-sm ${ isSameDay(dayAnchor,new Date())?'text-blue-400':'text-gray-400' }`}>
                 {dayAnchor.toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}
               </p>
             </div>
-            <div style={{height:TOTAL_HOURS*ROW_PX}} className="mx-5 mb-5">
+            <div className="mx-5 mb-8" style={{height: totalTimelinePx}}>
               <DayTimeline day={dayAnchor} />
             </div>
           </div>
         )}
       </div>
 
-      {/* ─── edit modal ─── */}
+      {/* edit modal */}
       {editWO && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" onClick={()=>setEditWO(null)}>
           <div className="bg-[#1a1f2e] border border-white/10 rounded-2xl p-6 w-96 shadow-2xl" onClick={e=>e.stopPropagation()}>
@@ -560,7 +587,7 @@ export default function CalendarPage() {
             <div className="flex gap-3 mt-6">
               <button onClick={saveEdit} disabled={!editDate||saving===editWO.id}
                 className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-sm font-semibold rounded-xl">
-                {saving===editWO.id?'Saving...':'Save Schedule'}
+                {saving===editWO.id?'Saving...':'Save'}
               </button>
               <button onClick={()=>setEditWO(null)} className="px-4 py-2.5 bg-white/5 hover:bg-white/10 text-gray-300 text-sm rounded-xl">Cancel</button>
             </div>
@@ -570,7 +597,7 @@ export default function CalendarPage() {
 
       {/* toast */}
       {toast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-gray-800 border border-white/10 text-white text-sm px-5 py-3 rounded-xl shadow-2xl z-50">{toast}</div>
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-gray-900 border border-white/10 text-white text-sm px-5 py-3 rounded-xl shadow-2xl z-50 max-w-sm text-center">{toast}</div>
       )}
     </div>
   )

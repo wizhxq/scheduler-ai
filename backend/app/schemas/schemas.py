@@ -67,6 +67,7 @@ class WorkOrderUpdate(BaseModel):
     status: Optional[WorkOrderStatus] = None
     notes: Optional[str] = None
     is_rush: Optional[bool] = None
+    customer_name: Optional[str] = None
 
 
 class WorkOrderOut(BaseModel):
@@ -114,6 +115,15 @@ class OperationOut(BaseModel):
 
 
 # --- Schedule Schemas ---
+
+# Used by PATCH /schedule/items/{id} — frontend sends {start_time, end_time}
+# as a plain JSON object. Defining it as a Pydantic model means FastAPI
+# automatically parses the request body into this shape.
+class RescheduleBody(BaseModel):
+    start_time: datetime
+    end_time: datetime
+
+
 class ScheduleItemOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
