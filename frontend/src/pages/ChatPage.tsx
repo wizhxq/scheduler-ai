@@ -8,24 +8,23 @@ interface Message {
 }
 
 const SUGGESTIONS = [
-  'What machines do we have?',
-  'Show me the current work orders',
-  'Compute the optimal schedule',
-  'Which work order takes the longest?',
-  'Make work order WO-001 done by tomorrow 5pm',
+  "What machines do we have?",
+  "Add a new CNC machine named CNC-01",
+  "Create work order WO-100 for Customer A",
+  "Show me the current work orders",
+  "Compute the optimal schedule",
 ]
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([
-    { 
-      role: 'assistant', 
+    {
+      role: 'assistant',
       content: `Hi! I can help you manage your machine schedule.
-
 Ask me to:
-- Compute a schedule
+- Add or list machines
+- Create work orders and operations
 - Adjust deadlines or priorities
-- Show work orders or machines
-- Explain what is running on each machine` 
+- Compute and summarize the schedule`
     }
   ])
   const [input, setInput] = useState('')
@@ -38,15 +37,24 @@ Ask me to:
 
   const send = async (text: string) => {
     if (!text.trim() || loading) return
+
     const userMsg: Message = { role: 'user', content: text }
     setMessages(prev => [...prev, userMsg])
     setInput('')
     setLoading(true)
+
     try {
       const res = await sendChat(text)
-      setMessages(prev => [...prev, { role: 'assistant', content: res.reply, actions: res.actions_taken }])
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: res.reply,
+        actions: res.actions_taken
+      }])
     } catch (e: any) {
-      setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${e.response?.data?.detail || 'Something went wrong'}` }])
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: `Error: ${e.response?.data?.detail || 'Something went wrong'}`
+      }])
     } finally {
       setLoading(false)
     }
@@ -76,7 +84,9 @@ Ask me to:
                   <p className="text-[10px] text-gray-500 uppercase font-bold tracking-widest">Actions Executed</p>
                   {m.actions.map((act: any, idx: number) => (
                     <div key={idx} className="flex items-center gap-2 text-xs text-blue-400">
-                      <span>⚡</span> {act.type}: {act.description || JSON.stringify(act.data)}
+                      <span>⚡</span>
+                      <span className="font-semibold">{act.tool || act.type}:</span>
+                      <span className="text-gray-400">{JSON.stringify(act.args || act.data)}</span>
                     </div>
                   ))}
                 </div>
@@ -86,52 +96,57 @@ Ask me to:
         ))}
         {loading && (
           <div className="flex justify-start">
-            <div className="bg-[#1a1f2e] border border-white/5 rounded-2xl rounded-tl-none p-4 flex gap-2">
-              <span className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-bounce" />
-              <span className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-bounce [animation-delay:0.2s]" />
-              <span className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-bounce [animation-delay:0.4s]" />
+            <div className="bg-[#1a1f2e] text-gray-400 p-4 rounded-2xl rounded-tl-none border border-white/5">
+              <div className="flex gap-1">
+                <div className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                <div className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                <div className="w-1.5 h-1.5 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+              </div>
             </div>
           </div>
         )}
         <div ref={bottomRef} />
       </div>
 
-      {/* Input Area */}
-      <div className="p-6 bg-[#0f1117] border-t border-white/5 space-y-4">
-        {/* Suggestions */}
-        <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-hide">
-          <p className="text-gray-500 text-[10px] uppercase font-bold mr-2 whitespace-nowrap">Try asking:</p>
-          {SUGGESTIONS.map(s => (
-            <button
-              key={s}
-              onClick={() => send(s)}
-              className="whitespace-nowrap px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/5 rounded-full text-gray-400 text-xs transition-colors"
-            >
-              {s}
-            </button>
-          ))}
-        </div>
+      {/* Input area */}
+      <div className="p-6 bg-[#1a1f2e]/50 border-t border-white/5">
+        <div className="max-w-4xl mx-auto space-y-4">
+          <div className="flex flex-wrap gap-2">
+            {SUGGESTIONS.map(s => (
+              <button
+                key={s}
+                onClick={() => send(s)}
+                className="text-xs px-3 py-1.5 rounded-full bg-white/5 hover:bg-white/10 text-gray-400 border border-white/5 transition-colors"
+              >
+                {s}
+              </button>
+            ))}
+          </div>
 
-        <div className="relative">
-          <textarea
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={handleKey}
-            placeholder="Ask the AI to compute a schedule, adjust priorities, or explain your ops..."
-            className="w-full bg-[#1a1f2e] border border-white/10 rounded-2xl pl-4 pr-14 py-4 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-blue-500/50 resize-none h-14"
-            rows={1}
-          />
-          <button
-            onClick={() => send(input)}
-            disabled={!input.trim() || loading}
-            className="absolute right-3 top-2.5 p-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded-xl transition-all"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-            </svg>
-          </button>
+          <div className="relative">
+            <textarea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKey}
+              placeholder="Ask the AI to compute a schedule, adjust priorities, or explain your ops..."
+              className="w-full bg-[#1a1f2e] text-gray-200 text-sm rounded-xl pl-4 pr-12 py-3 border border-white/10 focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50 outline-none resize-none"
+              rows={1}
+            />
+            <button
+              onClick={() => send(input)}
+              disabled={!input.trim() || loading}
+              className="absolute right-2 top-2 p-1.5 text-blue-500 hover:text-blue-400 disabled:text-gray-600 disabled:cursor-not-allowed transition-colors"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="22" y1="2" x2="11" y2="13" />
+                <polygon points="22 2 15 22 11 13 2 9 22 2" />
+              </svg>
+            </button>
+          </div>
+          <p className="text-[10px] text-center text-gray-600">
+            Powered by Groq + Llama 3.3 • Integrated Machine Scheduler
+          </p>
         </div>
-        <p className="text-center text-[10px] text-gray-600">Press Enter to send · Shift+Enter for new line</p>
       </div>
     </div>
   )
