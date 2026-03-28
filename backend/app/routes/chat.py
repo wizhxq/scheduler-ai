@@ -14,13 +14,18 @@ import os
 
 # Groq is OpenAI-compatible and FREE - just swap the base_url
 # Sign up at console.groq.com to get your free API key
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+
 try:
     from openai import OpenAI
-    client = OpenAI(
-        api_key=os.getenv("GROQ_API_KEY", "your-groq-key-here"),
-        base_url="https://api.groq.com/openai/v1"
-    )
-    AI_MODEL = "llama-3.3-70b-versatile"  # Free on Groq
+    if GROQ_API_KEY and GROQ_API_KEY not in ("your-groq-key-here", ""):
+        client = OpenAI(
+            api_key=GROQ_API_KEY,
+            base_url="https://api.groq.com/openai/v1"
+        )
+        AI_MODEL = "llama-3.3-70b-versatile"  # Free on Groq
+    else:
+        client = None
 except Exception:
     client = None
 
@@ -41,12 +46,11 @@ Always call recompute_schedule after making any changes.
 Always explain what you did and what the impact is on the schedule.
 """
 
-
 @router.post("", response_model=ChatResponse)
 def chat(request: ChatRequest, db: Session = Depends(get_db)):
     if client is None:
         return ChatResponse(
-            reply="AI chat is not configured. Please set GROQ_API_KEY in your .env file. Get a free key at console.groq.com",
+            reply="AI chat is not configured. To enable it:\n\n1. Go to https://console.groq.com and sign up for free\n2. Create an API key\n3. Edit your .env file and set: GROQ_API_KEY=your-actual-key\n4. Restart with: docker-compose up --build",
             actions_taken=[]
         )
 
@@ -56,43 +60,56 @@ def chat(request: ChatRequest, db: Session = Depends(get_db)):
     ]
     actions_taken = []
 
-    # Agentic loop: keep calling Groq until no more tool calls
-    while True:
-        response = client.chat.completions.create(
-            model=AI_MODEL,
-            messages=messages,
-            tools=TOOLS,
-            tool_choice="auto"
+    try:
+        # Agentic loop: keep calling Groq until no more tool calls
+        while True:
+            response = client.chat.completions.create(
+                model=AI_MODEL,
+                messages=messages,
+                tools=TOOLS,
+                tool_choice="auto"
+            )
+            msg = response.choices[0].message
+            messages.append(msg)
+
+            if not msg.tool_calls:
+                break
+
+            for tool_call in msg.tool_calls:
+                fn = tool_call.function.name
+                args = json.loads(tool_call.function.arguments)
+
+                if fn == "update_work_order_deadline":
+                    result = update_work_order_deadline(db, **args)
+                elif fn == "change_work_order_priority":
+                    result = change_work_order_priority(db, **args)
+                elif fn == "recompute_schedule":
+                    result = recompute_schedule(db)
+                elif fn == "get_schedule_summary_text":
+                    result = get_schedule_summary_text(db)
+                else:
+                    result = {"error": f"Unknown tool: {fn}"}
+
+                actions_taken.append({"tool": fn, "args": args, "result": result})
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": json.dumps(result)
+                })
+
+        return ChatResponse(
+            reply=msg.content or "Done.",
+            actions_taken=actions_taken
         )
-        msg = response.choices[0].message
-        messages.append(msg)
 
-        if not msg.tool_calls:
-            break
-
-        for tool_call in msg.tool_calls:
-            fn = tool_call.function.name
-            args = json.loads(tool_call.function.arguments)
-
-            if fn == "update_work_order_deadline":
-                result = update_work_order_deadline(db, **args)
-            elif fn == "change_work_order_priority":
-                result = change_work_order_priority(db, **args)
-            elif fn == "recompute_schedule":
-                result = recompute_schedule(db)
-            elif fn == "get_schedule_summary_text":
-                result = get_schedule_summary_text(db)
-            else:
-                result = {"error": f"Unknown tool: {fn}"}
-
-            actions_taken.append({"tool": fn, "args": args, "result": result})
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tool_call.id,
-                "content": json.dumps(result)
-            })
-
-    return ChatResponse(
-        reply=msg.content or "Done.",
-        actions_taken=actions_taken
-    )
+    except Exception as e:
+        error_msg = str(e)
+        if "401" in error_msg or "invalid_api_key" in error_msg.lower() or "authentication" in error_msg.lower():
+            return ChatResponse(
+                reply="Invalid Groq API key. Please check your GROQ_API_KEY in the .env file.\nGet a free key at https://console.groq.com",
+                actions_taken=[]
+            )
+        return ChatResponse(
+            reply=f"AI error: {error_msg[:200]}. Please check your Groq API key configuration.",
+            actions_taken=[]
+        )
