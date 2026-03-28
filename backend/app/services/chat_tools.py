@@ -1,12 +1,5 @@
 """
 chat_tools.py — AI-callable tool layer for the scheduler assistant.
-
-Architecture:
-  - TOOL_REGISTRY maps OpenAI function-call names → Python callables.
-  - dispatch_tool() is the single entry point called by the chat route.
-  - Every tool returns a plain string; the AI embeds it in its reply.
-  - All DB mutations are guarded by try/except with explicit rollback.
-  - The TOOLS list is the OpenAI-compatible JSON schema for all tools.
 """
 
 from __future__ import annotations
@@ -42,7 +35,6 @@ def _create_machine(db: Session, code: str, name: str, **_) -> str:
 
 
 def _list_machines(db: Session, **_) -> str:
-    """List all registered machines."""
     machines = db.query(Machine).order_by(Machine.code).all()
     if not machines:
         return "No machines registered yet."
@@ -56,7 +48,7 @@ def _list_machines(db: Session, **_) -> str:
 
 def _list_work_orders(db: Session, status_filter: str = "all", **_) -> str:
     q = db.query(WorkOrder)
-    if status_filter != "all":
+    if status_filter and status_filter != "all":
         q = q.filter(WorkOrder.status == status_filter)
     wos = q.order_by(WorkOrder.priority, WorkOrder.due_date).all()
     if not wos:
@@ -291,19 +283,14 @@ TOOL_REGISTRY: Dict[str, Any] = {
 
 
 def dispatch_tool(db: Session, tool_name: str, arguments: Dict[str, Any]) -> str:
-    """
-    Execute the named tool with *arguments* and return a plain-text result
-    suitable for injecting into an AI message.
-
-    Usage in the chat route::
-
-        result = dispatch_tool(db, tc.function.name, json.loads(tc.function.arguments))
-        messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
-    """
     fn = TOOL_REGISTRY.get(tool_name)
     if fn is None:
         logger.warning("dispatch_tool: unknown tool %r", tool_name)
         return f"Unknown tool: {tool_name!r}. Available: {list(TOOL_REGISTRY)}"
+    # Safety guard: ensure arguments is always a dict, never None or other type
+    if not isinstance(arguments, dict):
+        logger.warning("dispatch_tool: arguments was %r for tool %r, defaulting to {}", type(arguments), tool_name)
+        arguments = {}
     logger.info("Dispatching tool %r with args %s", tool_name, arguments)
     return fn(db=db, **arguments)
 
@@ -405,7 +392,7 @@ TOOLS = [
                 "type": "object",
                 "properties": {
                     "work_order_code": {"type": "string"},
-                    "new_due_date": {"type": "string", "description": "ISO datetime e.g. '2025-04-10T17:00:00'"},
+                    "new_due_date": {"type": "string", "description": "ISO datetime e.g. '2026-04-10T17:00:00'"},
                 },
                 "required": ["work_order_code", "new_due_date"],
             },

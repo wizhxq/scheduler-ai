@@ -49,10 +49,6 @@ _NOT_CONFIGURED_MSG = (
 
 
 def _build_system_prompt(db: Session) -> str:
-    """
-    Inject live factory context so the AI never has to guess machine codes
-    or work order codes — it already knows them from the system prompt.
-    """
     machines = db.query(Machine).order_by(Machine.code).all()
     work_orders = db.query(WorkOrder).order_by(WorkOrder.code).all()
     priority_label = {1: "Critical", 2: "High", 3: "Medium", 4: "Low"}
@@ -108,6 +104,47 @@ You have direct control over machines, work orders, operations, and the schedule
 """
 
 
+def _serialize_message(msg) -> Dict[str, Any]:
+    """
+    Safely serialize an assistant message for the next API call.
+    model_dump(exclude_unset=True) can silently drop tool_calls on some
+    SDK versions, which causes Groq to return malformed follow-up calls.
+    We build the dict manually to guarantee tool_calls is always present
+    when it exists.
+    """
+    out: Dict[str, Any] = {"role": msg.role, "content": msg.content or ""}
+    if msg.tool_calls:
+        out["tool_calls"] = [
+            {
+                "id": tc.id,
+                "type": "function",
+                "function": {
+                    "name": tc.function.name,
+                    "arguments": tc.function.arguments or "{}",
+                },
+            }
+            for tc in msg.tool_calls
+        ]
+    return out
+
+
+def _safe_parse_args(raw_arguments) -> Dict[str, Any]:
+    """
+    Parse tool call arguments defensively.
+    Groq sometimes returns None, an empty string, or already-parsed dicts.
+    """
+    if not raw_arguments:
+        return {}
+    if isinstance(raw_arguments, dict):
+        return raw_arguments
+    try:
+        parsed = json.loads(raw_arguments)
+        return parsed if isinstance(parsed, dict) else {}
+    except (json.JSONDecodeError, TypeError):
+        logger.warning("Could not parse tool arguments: %r", raw_arguments)
+        return {}
+
+
 @router.post("", response_model=ChatResponse)
 def chat(request: ChatRequest, db: Session = Depends(get_db)):
     if _client is None:
@@ -119,6 +156,7 @@ def chat(request: ChatRequest, db: Session = Depends(get_db)):
         {"role": "user", "content": request.message},
     ]
     actions_taken = []
+    final_reply = "I wasn't sure how to respond. Please try rephrasing."
 
     try:
         for _iteration in range(10):  # hard cap against infinite loops
@@ -128,20 +166,20 @@ def chat(request: ChatRequest, db: Session = Depends(get_db)):
                 tools=TOOLS,
                 tool_choice="auto",
                 max_tokens=2048,
-                temperature=0.3,  # lower = more deterministic tool use
+                temperature=0.2,
             )
             msg = response.choices[0].message
-            messages.append(msg.model_dump(exclude_unset=True))
+
+            # Use safe manual serialization — not model_dump() which can drop tool_calls
+            messages.append(_serialize_message(msg))
 
             if not msg.tool_calls:
+                final_reply = msg.content or "Done."
                 break
 
             for tc in msg.tool_calls:
                 fn_name = tc.function.name
-                try:
-                    args = json.loads(tc.function.arguments)
-                except json.JSONDecodeError:
-                    args = {}
+                args = _safe_parse_args(tc.function.arguments)
 
                 result = dispatch_tool(db=db, tool_name=fn_name, arguments=args)
                 logger.info("Tool %r -> %s", fn_name, str(result)[:120])
@@ -149,7 +187,6 @@ def chat(request: ChatRequest, db: Session = Depends(get_db)):
                 actions_taken.append({"tool": fn_name, "args": args, "result": result})
                 messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
-        final_reply = msg.content or "Done."
         return ChatResponse(reply=final_reply, actions_taken=actions_taken)
 
     except Exception as exc:
