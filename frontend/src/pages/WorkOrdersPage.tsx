@@ -56,7 +56,7 @@ export default function WorkOrdersPage() {
   }
 
   const handleAddOp = async (woId: number, seq: number) => {
-    await createOperation({ work_order_id: woId, machine_id: opMachine, sequence: seq, duration_minutes: opDuration })
+    await createOperation({ work_order_id: woId, machine_id: opMachine, sequence_no: seq, processing_minutes: opDuration })
     await loadOps(woId)
   }
 
@@ -67,7 +67,6 @@ export default function WorkOrdersPage() {
 
   return (
     <div className="p-8 space-y-6">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">Work Orders</h1>
@@ -81,41 +80,29 @@ export default function WorkOrdersPage() {
         </button>
       </div>
 
-      {/* Create Form */}
       {showForm && (
         <div className="bg-[#1a2235] border border-white/10 rounded-2xl p-6">
           <h2 className="text-white font-semibold mb-4">New Work Order</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div>
               <label className="block text-xs text-gray-400 mb-1.5 font-medium">Order Code *</label>
-              <input
-                className="w-full bg-[#0d1526] border border-white/10 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-600"
-                value={code} onChange={e => setCode(e.target.value)}
-                placeholder="e.g. WO-001"
-              />
+              <input className="w-full bg-[#0d1526] border border-white/10 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-600"
+                value={code} onChange={e => setCode(e.target.value)} placeholder="e.g. WO-001" />
             </div>
             <div>
               <label className="block text-xs text-gray-400 mb-1.5 font-medium">Customer Name</label>
-              <input
-                className="w-full bg-[#0d1526] border border-white/10 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-600"
-                value={customerName} onChange={e => setCustomerName(e.target.value)}
-                placeholder="e.g. Acme Corp"
-              />
+              <input className="w-full bg-[#0d1526] border border-white/10 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-600"
+                value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="e.g. Acme Corp" />
             </div>
             <div>
               <label className="block text-xs text-gray-400 mb-1.5 font-medium">Due Date</label>
-              <input
-                type="date"
-                className="w-full bg-[#0d1526] border border-white/10 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                value={dueDate} onChange={e => setDueDate(e.target.value)}
-              />
+              <input type="date" className="w-full bg-[#0d1526] border border-white/10 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={dueDate} onChange={e => setDueDate(e.target.value)} />
             </div>
             <div>
               <label className="block text-xs text-gray-400 mb-1.5 font-medium">Priority</label>
-              <select
-                className="w-full bg-[#0d1526] border border-white/10 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                value={priority} onChange={e => setPriority(Number(e.target.value))}
-              >
+              <select className="w-full bg-[#0d1526] border border-white/10 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={priority} onChange={e => setPriority(Number(e.target.value))}>
                 <option value={1}>1 - Critical</option>
                 <option value={2}>2 - High</option>
                 <option value={3}>3 - Medium</option>
@@ -134,7 +121,6 @@ export default function WorkOrdersPage() {
         </div>
       )}
 
-      {/* Work Orders List */}
       {workOrders.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-center">
           <div className="text-5xl mb-4">📋</div>
@@ -149,32 +135,21 @@ export default function WorkOrdersPage() {
             const ops = operations[wo.id] || []
             return (
               <div key={wo.id} className="bg-[#1a2235] border border-white/10 rounded-2xl overflow-hidden hover:border-white/20 transition-colors">
-                {/* Order Row */}
-                <div
-                  className="flex items-center gap-4 px-5 py-4 cursor-pointer"
-                  onClick={() => handleExpand(wo.id)}
-                >
+                <div className="flex items-center gap-4 px-5 py-4 cursor-pointer" onClick={() => handleExpand(wo.id)}>
                   <div className={`w-2 h-2 rounded-full flex-shrink-0 ${pConfig.dot}`} />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-3">
                       <h3 className="text-white font-semibold text-sm font-mono">{wo.code}</h3>
                       {wo.customer_name && <span className="text-gray-400 text-sm">{wo.customer_name}</span>}
-                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${pConfig.color}`}>
-                        {pConfig.label}
-                      </span>
+                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${pConfig.color}`}>{pConfig.label}</span>
                     </div>
                     {wo.due_date && (
-                      <p className="text-gray-500 text-xs mt-0.5">
-                        Due: {new Date(wo.due_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
-                      </p>
+                      <p className="text-gray-500 text-xs mt-0.5">Due: {new Date(wo.due_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
                     )}
                   </div>
-                  <div className="text-right">
-                    <p className="text-xs text-gray-500">Order #{wo.id}</p>
-                  </div>
+                  <p className="text-xs text-gray-500">Order #{wo.id}</p>
                   <span className={`text-gray-500 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}>▾</span>
                 </div>
-                {/* Expanded Operations */}
                 {isExpanded && (
                   <div className="border-t border-white/10 px-5 py-4 space-y-3">
                     <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider">Operations</p>
@@ -188,32 +163,24 @@ export default function WorkOrdersPage() {
                               <span className="w-6 h-6 rounded-full bg-blue-600/20 text-blue-400 text-xs font-bold flex items-center justify-center">{op.sequence_no}</span>
                               <div>
                                 <p className="text-white text-sm font-medium">{machines.find(m => m.id === op.machine_id)?.name || `Machine #${op.machine_id}`}</p>
-                                <p className="text-gray-500 text-xs">{op.duration_minutes} min</p>
+                                <p className="text-gray-500 text-xs">{op.processing_minutes} min</p>
                               </div>
                             </div>
-                            <button onClick={() => handleDeleteOp(op.id, wo.id)}
-                              className="text-red-500 hover:text-red-400 text-xs transition-colors"
-                            >Remove</button>
+                            <button onClick={() => handleDeleteOp(op.id, wo.id)} className="text-red-500 hover:text-red-400 text-xs transition-colors">Remove</button>
                           </div>
                         ))}
                       </div>
                     )}
-                    {/* Add Operation */}
                     {machines.length > 0 && (
                       <div className="flex gap-2 mt-3">
-                        <select
-                          className="flex-1 bg-[#0d1526] border border-white/10 text-white rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
-                          value={opMachine} onChange={e => setOpMachine(Number(e.target.value))}
-                        >
+                        <select className="flex-1 bg-[#0d1526] border border-white/10 text-white rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          value={opMachine} onChange={e => setOpMachine(Number(e.target.value))}>
                           {machines.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
                         </select>
-                        <input
-                          type="number" min={1} placeholder="min"
-                          className="w-20 bg-[#0d1526] border border-white/10 text-white rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
-                          value={opDuration} onChange={e => setOpDuration(Number(e.target.value))}
-                        />
-                        <button
-                          onClick={() => handleAddOp(wo.id, ops.length + 1)}
+                        <input type="number" min={1} placeholder="min"
+                          className="w-24 bg-[#0d1526] border border-white/10 text-white rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          value={opDuration} onChange={e => setOpDuration(Number(e.target.value))} />
+                        <button onClick={() => handleAddOp(wo.id, ops.length + 1)}
                           className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-xl transition-colors"
                         >+ Op</button>
                       </div>
