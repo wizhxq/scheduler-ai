@@ -40,8 +40,8 @@ def _list_machines(db: Session, **_) -> str:
     lines = ["**Machines:**"]
     for m in machines:
         status = m.status.value if hasattr(m.status, "value") else str(m.status)
-        shift_info = f"shift {m.shift_start or '08:00'}–{m.shift_end or '18:00'}"
-        maint = f" | ⚠️ {m.maintenance_notes}" if status == "maintenance" and m.maintenance_notes else ""
+        shift_info = f"shift {m.shift_start or '08:00'}-{m.shift_end or '18:00'}"
+        maint = f" | {m.maintenance_notes}" if status == "maintenance" and m.maintenance_notes else ""
         lines.append(f"- {m.name} ({m.code}) | {status} | {shift_info}{maint}")
     return "\n".join(lines)
 
@@ -190,7 +190,7 @@ def _get_schedule_summary(db: Session, **_) -> str:
         return "No schedule has been computed yet. Ask me to recompute the schedule."
     summary = get_schedule_summary(db)
     return (
-        f"**Latest Schedule (Run #{run.id}, {run.algorithm})** \u2014 "
+        f"**Latest Schedule (Run #{run.id}, {run.algorithm})** - "
         f"{run.total_operations} operations | {run.on_time_count} on-time | {run.late_count} late | "
         f"Total delay: {run.total_delay_minutes} min | Utilization: {run.machine_utilization_pct}% | "
         f"Makespan: {getattr(run, 'makespan_minutes', 0)} min | "
@@ -260,10 +260,6 @@ def _find_free_slots(
     machine_code: Optional[str] = None,
     **_,
 ) -> str:
-    """
-    Find gaps in the schedule on a given date where at least `duration_minutes`
-    of uninterrupted free time exists on one or more machines.
-    """
     try:
         target_date = datetime.fromisoformat(date).date()
     except ValueError:
@@ -273,15 +269,14 @@ def _find_free_slots(
     if not run:
         return "No schedule exists yet. Recompute the schedule first."
 
-    # Determine which machines to inspect
     machines_q = db.query(Machine).filter(Machine.status == MachineStatus.available)
     if machine_code:
         machines_q = machines_q.filter(Machine.code == machine_code)
     machines: List[Machine] = machines_q.all()
     if not machines:
-        return f"No available machines found{' with code ' + machine_code if machine_code else ''}."
+        no_machine_msg = f" with code {machine_code}" if machine_code else ""
+        return f"No available machines found{no_machine_msg}."
 
-    # Shift window: default 08:00–18:00
     SHIFT_START_H = 8
     SHIFT_END_H = 18
 
@@ -290,7 +285,6 @@ def _find_free_slots(
         shift_start = datetime(target_date.year, target_date.month, target_date.day, SHIFT_START_H, 0)
         shift_end   = datetime(target_date.year, target_date.month, target_date.day, SHIFT_END_H, 0)
 
-        # Get all items for this machine on this day, sorted by start
         items = (
             db.query(ScheduleItem)
             .filter(
@@ -307,7 +301,6 @@ def _find_free_slots(
         ]
         booked.sort(key=lambda x: x[0])
 
-        # Walk the shift finding free gaps >= duration_minutes
         cursor = shift_start
         free_slots: List[str] = []
         for start_b, end_b in booked:
@@ -315,15 +308,14 @@ def _find_free_slots(
                 gap_mins = int((start_b - cursor).total_seconds() / 60)
                 if gap_mins >= duration_minutes:
                     free_slots.append(
-                        f"  {cursor.strftime('%H:%M')}–{start_b.strftime('%H:%M')} ({gap_mins} min free)"
+                        f"  {cursor.strftime('%H:%M')}-{start_b.strftime('%H:%M')} ({gap_mins} min free)"
                     )
             cursor = max(cursor, end_b)
-        # Trailing gap
         if shift_end > cursor:
             gap_mins = int((shift_end - cursor).total_seconds() / 60)
             if gap_mins >= duration_minutes:
                 free_slots.append(
-                    f"  {cursor.strftime('%H:%M')}–{shift_end.strftime('%H:%M')} ({gap_mins} min free)"
+                    f"  {cursor.strftime('%H:%M')}-{shift_end.strftime('%H:%M')} ({gap_mins} min free)"
                 )
 
         if free_slots:
@@ -341,11 +333,6 @@ def _reschedule_work_order_to_time(
     new_start_datetime: str,
     **_,
 ) -> str:
-    """
-    Move all schedule items for a work order so the first operation starts at
-    `new_start_datetime`, preserving the relative gaps between operations.
-    This directly patches ScheduleItem rows and recomputes KPIs.
-    """
     wo = db.query(WorkOrder).filter(WorkOrder.code == work_order_code).first()
     if not wo:
         return f"Work order '{work_order_code}' not found."
@@ -383,7 +370,6 @@ def _reschedule_work_order_to_time(
             item.start_time = s + delta
             item.end_time   = e + delta
 
-            # Recheck lateness
             if wo.due_date:
                 due = wo.due_date.replace(tzinfo=None) if wo.due_date.tzinfo else wo.due_date
                 item.is_late = item.end_time > due
@@ -396,11 +382,16 @@ def _reschedule_work_order_to_time(
         first_start = items[0].start_time
         last_end    = items[-1].end_time
         late_ops    = sum(1 for it in items if it.is_late)
+        # Build status string without backslash inside f-string (not allowed in Python < 3.12)
+        if late_ops:
+            late_status = f"Warning: {late_ops} op(s) now late vs due date."
+        else:
+            late_status = "All operations on time."
         return (
             f"Rescheduled {work_order_code}: "
             f"{len(items)} operation(s) moved to start at {first_start.strftime('%Y-%m-%d %H:%M')}. "
             f"Last operation ends {last_end.strftime('%H:%M')}. "
-            f"{'\u26a0\ufe0f ' + str(late_ops) + ' op(s) now late vs due date.' if late_ops else '✅ All operations on time.'}"
+            f"{late_status}"
         )
     except Exception as exc:
         db.rollback()
@@ -414,12 +405,6 @@ def _recommend_and_schedule(
     duration_minutes: Optional[int] = None,
     **_,
 ) -> str:
-    """
-    1. Inspect free slots across all machines on preferred_date (or today).
-    2. Pick the best slot (earliest gap that fits, preferring the WO's own machines).
-    3. Actually reschedule the WO to that slot.
-    4. Return a human-readable confirmation with the chosen time.
-    """
     wo = db.query(WorkOrder).filter(WorkOrder.code == work_order_code).first()
     if not wo:
         return f"Work order '{work_order_code}' not found."
@@ -428,7 +413,6 @@ def _recommend_and_schedule(
     if not run:
         return "No schedule computed yet. Run 'recompute_schedule' first."
 
-    # Determine required duration from schedule items
     items = (
         db.query(ScheduleItem)
         .filter(ScheduleItem.schedule_run_id == run.id, ScheduleItem.work_order_id == wo.id)
@@ -443,7 +427,6 @@ def _recommend_and_schedule(
         last_e  = items[-1].end_time.replace(tzinfo=None)   if items[-1].end_time.tzinfo   else items[-1].end_time
         duration_minutes = max(30, int((last_e - first_s).total_seconds() / 60))
 
-    # Choose the date to inspect
     if preferred_date:
         try:
             search_date = datetime.fromisoformat(preferred_date).date()
@@ -452,7 +435,6 @@ def _recommend_and_schedule(
     else:
         search_date = datetime.utcnow().date()
 
-    # Get WO's own machine IDs (preferred)
     wo_machine_ids = {op.machine_id for op in wo.operations}
 
     SHIFT_START_H = 8
@@ -495,9 +477,8 @@ def _recommend_and_schedule(
                         best_slot = cursor
                         best_machine = machine
                         best_priority = priority
-                    break  # earliest gap for this machine found
+                    break
             cursor = max(cursor, end_b)
-        # trailing
         if shift_end > cursor:
             gap_mins = int((shift_end - cursor).total_seconds() / 60)
             if gap_mins >= duration_minutes:
@@ -513,7 +494,6 @@ def _recommend_and_schedule(
             f"Try a different date or ask for free slots."
         )
 
-    # Actually reschedule
     result = _reschedule_work_order_to_time(
         db=db,
         work_order_code=work_order_code,
@@ -542,7 +522,6 @@ TOOL_REGISTRY: Dict[str, Any] = {
     "get_schedule_summary":          _get_schedule_summary,
     "set_maintenance_window":        _set_maintenance_window,
     "clear_maintenance":             _clear_maintenance,
-    # New
     "find_free_slots":               _find_free_slots,
     "reschedule_work_order_to_time": _reschedule_work_order_to_time,
     "recommend_and_schedule":        _recommend_and_schedule,
@@ -734,24 +713,20 @@ TOOLS = [
             },
         },
     },
-    # -----------------------------------------------------------------------
-    # New scheduling tools
-    # -----------------------------------------------------------------------
     {
         "type": "function",
         "function": {
             "name": "find_free_slots",
             "description": (
                 "Find all free time windows on a given date where at least duration_minutes "
-                "of uninterrupted time is available on each machine. Use this to answer "
-                "'what time is free on Tuesday' or 'when can I slot in WO-003 on Friday'."
+                "of uninterrupted time is available on each machine."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "date": {
                         "type": "string",
-                        "description": "Date to inspect, ISO format e.g. '2026-04-10' or '2026-04-10T00:00:00'",
+                        "description": "Date to inspect, ISO format e.g. '2026-04-10'",
                     },
                     "duration_minutes": {
                         "type": "integer",
@@ -760,7 +735,7 @@ TOOLS = [
                     },
                     "machine_code": {
                         "type": "string",
-                        "description": "Optional: check only this machine. Omit to check all.",
+                        "description": "Optional: check only this machine.",
                     },
                 },
                 "required": ["date"],
@@ -772,21 +747,16 @@ TOOLS = [
         "function": {
             "name": "reschedule_work_order_to_time",
             "description": (
-                "Move ALL operations of a work order so that the first operation starts at the "
-                "specified datetime, preserving relative gaps between operations. "
-                "Use when the user says 'move WO-002 to Monday 9am' or 'schedule WO-001 at 14:00 tomorrow'. "
-                "This directly patches the live schedule visible on the Calendar and Schedule pages."
+                "Move ALL operations of a work order so the first operation starts at the "
+                "specified datetime, preserving relative gaps between operations."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "work_order_code": {
-                        "type": "string",
-                        "description": "The WO code e.g. WO-001",
-                    },
+                    "work_order_code": {"type": "string"},
                     "new_start_datetime": {
                         "type": "string",
-                        "description": "ISO datetime for the new start of the first operation e.g. '2026-04-07T09:00:00'",
+                        "description": "ISO datetime e.g. '2026-04-07T09:00:00'",
                     },
                 },
                 "required": ["work_order_code", "new_start_datetime"],
@@ -799,24 +769,19 @@ TOOLS = [
             "name": "recommend_and_schedule",
             "description": (
                 "Automatically find the best available time slot for a work order on a given date "
-                "and immediately reschedule it there. Prefers the WO's own machines, picks the "
-                "earliest fitting gap. Use when the user says 'find a good time for WO-003 on Wednesday "
-                "and schedule it' or 'recommend and book a slot for WO-002 tomorrow'."
+                "and immediately reschedule it there."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "work_order_code": {
-                        "type": "string",
-                        "description": "The WO code e.g. WO-002",
-                    },
+                    "work_order_code": {"type": "string"},
                     "preferred_date": {
                         "type": "string",
-                        "description": "ISO date e.g. '2026-04-09'. Defaults to today if omitted.",
+                        "description": "ISO date e.g. '2026-04-09'. Defaults to today.",
                     },
                     "duration_minutes": {
                         "type": "integer",
-                        "description": "Override required duration. Defaults to auto-calculated from current schedule items.",
+                        "description": "Override required duration in minutes.",
                     },
                 },
                 "required": ["work_order_code"],
