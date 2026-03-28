@@ -92,6 +92,8 @@ class ScheduleItemOut(BaseModel):
     work_order_id: int
     operation_id: int
     machine_id: int
+    machine_name: Optional[str] = None
+    work_order_name: Optional[str] = None
     start_time: datetime
     end_time: datetime
     delay_minutes: int
@@ -103,6 +105,7 @@ class ScheduleItemOut(BaseModel):
 class ScheduleRunOut(BaseModel):
     schedule_run_id: int
     run_label: str
+    computed_at: Optional[datetime] = None
     created_at: datetime
     items: List[ScheduleItemOut]
 
