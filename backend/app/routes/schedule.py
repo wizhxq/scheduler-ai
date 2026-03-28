@@ -52,7 +52,7 @@ def trigger_schedule(db: Session = Depends(get_db)):
     Compute a new schedule from the current machines, work orders, and operations.
     Uses EDD (Earliest Due Date) with shift-awareness and conflict detection.
     """
-    run = compute_schedule(db, run_label="manual")
+    run = compute_schedule(db, label="manual")
     return enrich_run(run, db)
 
 
@@ -77,27 +77,25 @@ def get_schedule_history(limit: int = 10, db: Session = Depends(get_db)):
 @router.get("/kpis", response_model=KPIOut)
 def get_kpis(db: Session = Depends(get_db)):
     """
-    Return live KPI dashboard metrics:
-    - Total WIP (work in progress)
-    - On-time delivery rate
-    - Machine utilization
-    - Avg lead time
-    - Overdue orders count
-    - Conflict count
+    Return live KPI dashboard metrics.
     """
     now = datetime.utcnow()
-
     all_wos = db.query(WorkOrder).all()
     total_wos = len(all_wos)
     pending = sum(1 for w in all_wos if w.status.value == "pending")
     in_progress = sum(1 for w in all_wos if w.status.value == "in_progress")
     completed = sum(1 for w in all_wos if w.status.value == "completed")
-    overdue = sum(1 for w in all_wos if w.due_date and w.due_date < now and w.status.value not in ("completed", "cancelled"))
-    on_time = sum(1 for w in all_wos if w.status.value == "completed" and w.due_date and w.completed_at and w.completed_at <= w.due_date)
+    overdue = sum(
+        1 for w in all_wos
+        if w.due_date and w.due_date < now and w.status.value not in ("completed", "cancelled")
+    )
+    on_time = sum(
+        1 for w in all_wos
+        if w.status.value == "completed" and w.due_date and w.completed_at and w.completed_at <= w.due_date
+    )
     completed_total = completed or 1
     on_time_rate = round((on_time / completed_total) * 100, 1)
 
-    # Lead time avg (started_at -> completed_at)
     lead_times = [
         (w.completed_at - w.started_at).total_seconds() / 3600
         for w in all_wos
@@ -105,7 +103,6 @@ def get_kpis(db: Session = Depends(get_db)):
     ]
     avg_lead_time_hours = round(sum(lead_times) / len(lead_times), 1) if lead_times else 0
 
-    # Latest schedule run stats
     latest_run = db.query(ScheduleRun).order_by(ScheduleRun.created_at.desc()).first()
     machine_utilization = round(latest_run.machine_utilization_pct, 1) if latest_run else 0
     conflicts = db.query(ScheduleItem).filter(ScheduleItem.is_conflict == True).count() if latest_run else 0
@@ -139,11 +136,9 @@ def update_work_order_status(wo_id: int, status: str, db: Session = Depends(get_
     wo = db.query(WorkOrder).filter(WorkOrder.id == wo_id).first()
     if not wo:
         raise HTTPException(status_code=404, detail="Work order not found")
-
     valid = ["pending", "in_progress", "paused", "completed", "cancelled", "on_hold"]
     if status not in valid:
         raise HTTPException(status_code=400, detail=f"Invalid status. Choose from: {valid}")
-
     wo.status = status
     if status == "in_progress" and not wo.started_at:
         wo.started_at = datetime.utcnow()
@@ -151,7 +146,6 @@ def update_work_order_status(wo_id: int, status: str, db: Session = Depends(get_
         wo.completed_at = datetime.utcnow()
     elif status == "paused":
         wo.paused_at = datetime.utcnow()
-
     db.commit()
     return {"message": f"Work order {wo.code} status updated to {status}", "updated_at": datetime.utcnow()}
 
@@ -162,11 +156,9 @@ def update_machine_status(machine_id: int, status: str, notes: str = "", db: Ses
     machine = db.query(Machine).filter(Machine.id == machine_id).first()
     if not machine:
         raise HTTPException(status_code=404, detail="Machine not found")
-
     valid = ["available", "busy", "maintenance", "offline"]
     if status not in valid:
         raise HTTPException(status_code=400, detail=f"Invalid status")
-
     machine.status = status
     if notes:
         machine.maintenance_notes = notes
