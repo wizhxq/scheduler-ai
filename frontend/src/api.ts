@@ -23,9 +23,11 @@ export const createOperation = (data: any) => api.post('/api/operations', data).
 export const deleteOperation = (id: number) => api.delete(`/api/operations/${id}`)
 
 // Schedule
-export const computeSchedule = () => api.post('/api/schedule/compute').then(r => r.data)
+export const computeSchedule = (algorithm: string = 'DDO') =>
+  api.post('/api/schedule/compute', null, { params: { algorithm } }).then(r => r.data)
 export const getLatestSchedule = () => api.get('/api/schedule/latest').then(r => r.data)
 export const getScheduleHistory = () => api.get('/api/schedule/history').then(r => r.data)
+export const getBottlenecks = () => api.get('/api/schedule/bottlenecks').then(r => r.data)
 
 // Chat
 export const sendChat = (message: string) =>
