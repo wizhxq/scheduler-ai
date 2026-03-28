@@ -14,12 +14,12 @@ export default function WorkOrdersPage() {
   const [operations, setOperations] = useState<Record<number, any[]>>({})
   const [expanded, setExpanded] = useState<number | null>(null)
   const [showForm, setShowForm] = useState(false)
-  const [name, setName] = useState('')
-  const [deadline, setDeadline] = useState('')
+  const [code, setCode] = useState('')
+  const [customerName, setCustomerName] = useState('')
+  const [dueDate, setDueDate] = useState('')
   const [priority, setPriority] = useState(3)
   const [opMachine, setOpMachine] = useState<number>(0)
   const [opDuration, setOpDuration] = useState(60)
-  const [opSeq, setOpSeq] = useState(1)
 
   const load = async () => {
     const [wo, m] = await Promise.all([getWorkOrders(), getMachines()])
@@ -40,10 +40,16 @@ export default function WorkOrdersPage() {
   }
 
   const handleAddWO = async () => {
-    if (!name.trim()) return
-    await createWorkOrder({ name, deadline: deadline || null, priority })
-    setName('')
-    setDeadline('')
+    if (!code.trim()) return
+    await createWorkOrder({
+      code,
+      customer_name: customerName || null,
+      due_date: dueDate ? new Date(dueDate).toISOString() : new Date(Date.now() + 7 * 86400000).toISOString(),
+      priority
+    })
+    setCode('')
+    setCustomerName('')
+    setDueDate('')
     setPriority(3)
     setShowForm(false)
     await load()
@@ -77,29 +83,37 @@ export default function WorkOrdersPage() {
 
       {/* Create Form */}
       {showForm && (
-        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
+        <div className="bg-[#1a2235] border border-white/10 rounded-2xl p-6">
           <h2 className="text-white font-semibold mb-4">New Work Order</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="sm:col-span-1">
-              <label className="block text-xs text-gray-400 mb-1.5 font-medium">Order Name</label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div>
+              <label className="block text-xs text-gray-400 mb-1.5 font-medium">Order Code *</label>
               <input
-                className="w-full bg-gray-800 border border-gray-700 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-600"
-                value={name} onChange={e => setName(e.target.value)}
-                placeholder="e.g. Batch #1042"
+                className="w-full bg-[#0d1526] border border-white/10 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-600"
+                value={code} onChange={e => setCode(e.target.value)}
+                placeholder="e.g. WO-001"
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-400 mb-1.5 font-medium">Deadline</label>
+              <label className="block text-xs text-gray-400 mb-1.5 font-medium">Customer Name</label>
+              <input
+                className="w-full bg-[#0d1526] border border-white/10 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-600"
+                value={customerName} onChange={e => setCustomerName(e.target.value)}
+                placeholder="e.g. Acme Corp"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-400 mb-1.5 font-medium">Due Date</label>
               <input
                 type="date"
-                className="w-full bg-gray-800 border border-gray-700 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                value={deadline} onChange={e => setDeadline(e.target.value)}
+                className="w-full bg-[#0d1526] border border-white/10 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={dueDate} onChange={e => setDueDate(e.target.value)}
               />
             </div>
             <div>
               <label className="block text-xs text-gray-400 mb-1.5 font-medium">Priority</label>
               <select
-                className="w-full bg-gray-800 border border-gray-700 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full bg-[#0d1526] border border-white/10 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 value={priority} onChange={e => setPriority(Number(e.target.value))}
               >
                 <option value={1}>1 - Critical</option>
@@ -110,11 +124,11 @@ export default function WorkOrdersPage() {
             </div>
           </div>
           <div className="flex gap-3 mt-4">
-            <button onClick={handleAddWO} disabled={!name.trim()}
+            <button onClick={handleAddWO} disabled={!code.trim()}
               className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors"
             >Create Order</button>
             <button onClick={() => setShowForm(false)}
-              className="px-5 py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm font-medium rounded-xl transition-colors"
+              className="px-5 py-2.5 bg-white/10 hover:bg-white/20 text-gray-300 text-sm font-medium rounded-xl transition-colors"
             >Cancel</button>
           </div>
         </div>
@@ -134,7 +148,7 @@ export default function WorkOrdersPage() {
             const isExpanded = expanded === wo.id
             const ops = operations[wo.id] || []
             return (
-              <div key={wo.id} className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden hover:border-gray-700 transition-colors">
+              <div key={wo.id} className="bg-[#1a2235] border border-white/10 rounded-2xl overflow-hidden hover:border-white/20 transition-colors">
                 {/* Order Row */}
                 <div
                   className="flex items-center gap-4 px-5 py-4 cursor-pointer"
@@ -143,14 +157,15 @@ export default function WorkOrdersPage() {
                   <div className={`w-2 h-2 rounded-full flex-shrink-0 ${pConfig.dot}`} />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-3">
-                      <h3 className="text-white font-semibold text-sm">{wo.name}</h3>
+                      <h3 className="text-white font-semibold text-sm font-mono">{wo.code}</h3>
+                      {wo.customer_name && <span className="text-gray-400 text-sm">{wo.customer_name}</span>}
                       <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${pConfig.color}`}>
                         {pConfig.label}
                       </span>
                     </div>
-                    {wo.deadline && (
+                    {wo.due_date && (
                       <p className="text-gray-500 text-xs mt-0.5">
-                        Due: {new Date(wo.deadline).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        Due: {new Date(wo.due_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
                       </p>
                     )}
                   </div>
@@ -159,19 +174,18 @@ export default function WorkOrdersPage() {
                   </div>
                   <span className={`text-gray-500 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}>▾</span>
                 </div>
-
                 {/* Expanded Operations */}
                 {isExpanded && (
-                  <div className="border-t border-gray-800 px-5 py-4 space-y-3">
+                  <div className="border-t border-white/10 px-5 py-4 space-y-3">
                     <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider">Operations</p>
                     {ops.length === 0 ? (
                       <p className="text-gray-600 text-sm">No operations yet</p>
                     ) : (
                       <div className="space-y-2">
                         {ops.map((op: any) => (
-                          <div key={op.id} className="flex items-center justify-between bg-gray-800 rounded-xl px-4 py-3">
+                          <div key={op.id} className="flex items-center justify-between bg-[#0d1526] rounded-xl px-4 py-3">
                             <div className="flex items-center gap-3">
-                              <span className="w-6 h-6 rounded-full bg-blue-600/20 text-blue-400 text-xs font-bold flex items-center justify-center">{op.sequence}</span>
+                              <span className="w-6 h-6 rounded-full bg-blue-600/20 text-blue-400 text-xs font-bold flex items-center justify-center">{op.sequence_no}</span>
                               <div>
                                 <p className="text-white text-sm font-medium">{machines.find(m => m.id === op.machine_id)?.name || `Machine #${op.machine_id}`}</p>
                                 <p className="text-gray-500 text-xs">{op.duration_minutes} min</p>
@@ -184,19 +198,18 @@ export default function WorkOrdersPage() {
                         ))}
                       </div>
                     )}
-
                     {/* Add Operation */}
                     {machines.length > 0 && (
                       <div className="flex gap-2 mt-3">
                         <select
-                          className="flex-1 bg-gray-800 border border-gray-700 text-white rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          className="flex-1 bg-[#0d1526] border border-white/10 text-white rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                           value={opMachine} onChange={e => setOpMachine(Number(e.target.value))}
                         >
                           {machines.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
                         </select>
                         <input
                           type="number" min={1} placeholder="min"
-                          className="w-20 bg-gray-800 border border-gray-700 text-white rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          className="w-20 bg-[#0d1526] border border-white/10 text-white rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                           value={opDuration} onChange={e => setOpDuration(Number(e.target.value))}
                         />
                         <button
