@@ -2,18 +2,24 @@
 scheduler.py — Production-grade job scheduling engine.
 
 Algorithms supported:
-  EDD  – Earliest Due Date (default)
-  SPT  – Shortest Processing Time
-  FIFO – First In, First Out (by creation date)
-  CRITICAL_RATIO – (due_date - now) / remaining_processing_time
+  EDD            – Earliest Due Date (default)
+  SPT            – Shortest Processing Time first
+  FIFO           – First In First Out (by creation date)
+  CRITICAL_RATIO – (slack_minutes / remaining_processing_minutes); lower = more urgent
 
-Key design principles:
-  - Operations within a work order are scheduled strictly in sequence_no order.
+Design principles:
+  - Operations within a work order are scheduled in strict sequence_no order
+    (precedence constraint).
   - machine_free_at tracks per-machine availability across ALL work orders.
-  - wo_earliest tracks the earliest a WO's NEXT operation can start (predecessor end).
-  - All datetimes are timezone-naive UTC throughout; convert at API boundary only.
-  - Shift capacity is computed over the actual schedule window (not a single day).
-  - Every public function is wrapped in a try/except that rolls back on failure.
+  - wo_predecessor_end tracks the end of the last operation in the current WO
+    (ensures no two ops of the same WO overlap).
+  - Both constraints are enforced via max(machine_free_at, wo_predecessor_end).
+  - Shift capacity is computed over the ACTUAL schedule window, not a single day.
+  - Makespan is stored on the ScheduleRun for fast KPI queries.
+  - Conflict detection: flags any ScheduleItem that overlaps with another item
+    on the same machine within the same run.
+  - All datetimes are timezone-naive UTC. Convert at the API boundary only.
+  - Every public function rolls back on failure.
 """
 
 from __future__ import annotations
@@ -49,7 +55,7 @@ DEFAULT_SHIFT_START = "08:00"
 DEFAULT_SHIFT_END = "18:00"
 DEFAULT_SHIFT_DAYS = "1,2,3,4,5"  # Mon–Fri
 DEFAULT_SETUP_MINUTES = 15
-SCHEDULE_HORIZON_DAYS = 60  # max look-ahead when finding shift slots
+SCHEDULE_HORIZON_DAYS = 60
 
 
 # ---------------------------------------------------------------------------
@@ -57,7 +63,6 @@ SCHEDULE_HORIZON_DAYS = 60  # max look-ahead when finding shift slots
 # ---------------------------------------------------------------------------
 
 def _parse_hhmm(t: str) -> Tuple[int, int]:
-    """Parse 'HH:MM' → (hour, minute). Raises ValueError on bad input."""
     parts = t.strip().split(":")
     if len(parts) != 2:
         raise ValueError(f"Invalid time string: {t!r}")
@@ -65,11 +70,6 @@ def _parse_hhmm(t: str) -> Tuple[int, int]:
 
 
 def _parse_shift_days(shift_days_str: str) -> List[int]:
-    """
-    Parse shift_days which may be '1,2,3,4,5' or 'Mon,Tue,Wed,Thu,Fri'.
-    Returns a sorted list of ISO weekday numbers (1=Mon … 7=Sun).
-    Falls back to Mon–Fri on empty/invalid input.
-    """
     days: List[int] = []
     for token in shift_days_str.split(","):
         token = token.strip()
@@ -84,19 +84,15 @@ def _parse_shift_days(shift_days_str: str) -> List[int]:
 
 
 def _shift_bounds(machine: Machine, on_date: datetime) -> Tuple[datetime, datetime]:
-    """Return (shift_open, shift_close) for *machine* on the date of *on_date*."""
     sh, sm = _parse_hhmm(machine.shift_start or DEFAULT_SHIFT_START)
     eh, em = _parse_hhmm(machine.shift_end or DEFAULT_SHIFT_END)
-    shift_open = on_date.replace(hour=sh, minute=sm, second=0, microsecond=0)
-    shift_close = on_date.replace(hour=eh, minute=em, second=0, microsecond=0)
-    return shift_open, shift_close
+    return (
+        on_date.replace(hour=sh, minute=sm, second=0, microsecond=0),
+        on_date.replace(hour=eh, minute=em, second=0, microsecond=0),
+    )
 
 
 def _next_shift_start(machine: Machine, after: datetime) -> datetime:
-    """
-    Find the earliest datetime >= *after* that falls inside a scheduled shift
-    for *machine*.  Searches up to SCHEDULE_HORIZON_DAYS days ahead.
-    """
     shift_days = _parse_shift_days(machine.shift_days or DEFAULT_SHIFT_DAYS)
     candidate = after
     for _ in range(SCHEDULE_HORIZON_DAYS):
@@ -105,8 +101,7 @@ def _next_shift_start(machine: Machine, after: datetime) -> datetime:
             if candidate <= shift_open:
                 return shift_open
             if candidate < shift_close:
-                return candidate  # already inside the shift
-        # Advance to start of next day
+                return candidate
         candidate = (candidate + timedelta(days=1)).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
@@ -115,32 +110,27 @@ def _next_shift_start(machine: Machine, after: datetime) -> datetime:
     )
 
 
-def _find_slot(
-    machine: Machine, earliest: datetime, duration_minutes: int
-) -> datetime:
+def _find_slot(machine: Machine, earliest: datetime, duration_minutes: int) -> datetime:
     """
-    Return the earliest start time >= *earliest* where *duration_minutes*
-    fits entirely within one shift of *machine*.  Rolls over to the next
-    shift when the operation would straddle a shift boundary.
+    Find the earliest start >= *earliest* where *duration_minutes* fits
+    entirely within one shift. Rolls to next shift when it would straddle.
     """
     start = _next_shift_start(machine, earliest)
     for _ in range(SCHEDULE_HORIZON_DAYS):
         _, shift_close = _shift_bounds(machine, start)
         if start + timedelta(minutes=duration_minutes) <= shift_close:
             return start
-        # Does not fit — advance to beginning of next shift
         next_day = (start + timedelta(days=1)).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
         start = _next_shift_start(machine, next_day)
     raise RuntimeError(
-        f"Cannot fit {duration_minutes}-min operation on machine {machine.code} "
-        f"within {SCHEDULE_HORIZON_DAYS} days"
+        f"Cannot fit {duration_minutes}-min op on {machine.code} within {SCHEDULE_HORIZON_DAYS} days."
     )
 
 
 # ---------------------------------------------------------------------------
-# Sorting / priority keys
+# Sorting keys
 # ---------------------------------------------------------------------------
 
 _FAR_FUTURE = datetime(2099, 1, 1)
@@ -151,8 +141,7 @@ def _sort_key_edd(wo: WorkOrder):
 
 
 def _sort_key_spt(wo: WorkOrder):
-    total_minutes = sum(op.processing_minutes for op in wo.operations)
-    return (wo.priority, total_minutes)
+    return (wo.priority, sum(op.processing_minutes for op in wo.operations))
 
 
 def _sort_key_fifo(wo: WorkOrder):
@@ -160,7 +149,6 @@ def _sort_key_fifo(wo: WorkOrder):
 
 
 def _sort_key_cr(wo: WorkOrder):
-    """Critical Ratio = slack / remaining work.  Lower CR → more urgent."""
     now = datetime.utcnow()
     remaining = max(1, sum(op.processing_minutes for op in wo.operations))
     if wo.due_date:
@@ -178,7 +166,7 @@ _SORT_KEYS = {
 
 
 # ---------------------------------------------------------------------------
-# Main scheduling engine
+# Main engine
 # ---------------------------------------------------------------------------
 
 def compute_schedule(
@@ -188,19 +176,7 @@ def compute_schedule(
 ) -> ScheduleRun:
     """
     Build a full schedule for all pending/in-progress work orders and
-    persist it as a new ScheduleRun with associated ScheduleItems.
-
-    Args:
-        db:        Active SQLAlchemy session.
-        label:     Human-readable label for this schedule run.
-        algorithm: Sorting algorithm key (EDD | SPT | FIFO | CRITICAL_RATIO).
-
-    Returns:
-        The committed ScheduleRun ORM object.
-
-    Raises:
-        ValueError: If an unknown algorithm is requested.
-        RuntimeError: If a slot cannot be found within the horizon.
+    persist it as a ScheduleRun with ScheduleItems.
     """
     if algorithm not in _SORT_KEYS:
         raise ValueError(
@@ -221,16 +197,14 @@ def compute_schedule(
             .all()
         )
 
-        # Eagerly determine when each machine is next free (starts from now)
         now = datetime.utcnow()
         machine_free_at: Dict[int, datetime] = {m.id: now for m in machines}
 
-        sort_fn = _SORT_KEYS[algorithm]
-        sorted_wos = sorted(work_orders, key=sort_fn)
+        sorted_wos = sorted(work_orders, key=_SORT_KEYS[algorithm])
 
         run = ScheduleRun(label=label, algorithm=algorithm)
         db.add(run)
-        db.flush()  # obtain run.id without committing
+        db.flush()
 
         items: List[ScheduleItem] = []
         total_busy_minutes = 0
@@ -241,33 +215,27 @@ def compute_schedule(
         latest_end: Optional[datetime] = None
 
         for wo in sorted_wos:
-            # Operations MUST be executed in sequence_no order
             ordered_ops: List[Operation] = sorted(
                 wo.operations, key=lambda op: op.sequence_no
             )
-
-            # Tracks the earliest the *next* operation of this WO can start
-            # (i.e., the previous operation's end time — precedence constraint)
             wo_predecessor_end: Optional[datetime] = None
 
             for op in ordered_ops:
                 machine = machine_map.get(op.machine_id)
                 if machine is None:
                     logger.warning(
-                        "Operation %d references unknown machine %d — skipped",
-                        op.id,
-                        op.machine_id,
+                        "Op %d references unknown/offline machine %d — skipped",
+                        op.id, op.machine_id,
                     )
                     continue
 
-                setup = op.setup_minutes if op.setup_minutes is not None else (
-                    machine.default_setup_minutes or DEFAULT_SETUP_MINUTES
+                setup = (
+                    op.setup_minutes
+                    if op.setup_minutes is not None
+                    else (machine.default_setup_minutes or DEFAULT_SETUP_MINUTES)
                 )
                 duration = setup + op.processing_minutes
 
-                # Earliest start must satisfy BOTH constraints:
-                #   1. Machine is free
-                #   2. Predecessor operation is complete
                 earliest = machine_free_at[machine.id]
                 if wo_predecessor_end is not None:
                     earliest = max(earliest, wo_predecessor_end)
@@ -279,9 +247,7 @@ def compute_schedule(
                 is_late = False
                 if wo.due_date:
                     is_late = end > wo.due_date
-                    delay = max(
-                        0, int((end - wo.due_date).total_seconds() / 60)
-                    )
+                    delay = max(0, int((end - wo.due_date).total_seconds() / 60))
 
                 item = ScheduleItem(
                     schedule_run_id=run.id,
@@ -297,7 +263,6 @@ def compute_schedule(
                 db.add(item)
                 items.append(item)
 
-                # Update tracking state
                 machine_free_at[machine.id] = end
                 wo_predecessor_end = end
                 total_busy_minutes += duration
@@ -314,19 +279,35 @@ def compute_schedule(
                     latest_end = end
 
         # ------------------------------------------------------------------
-        # Utilization: busy_minutes / available_capacity over the actual
-        # schedule window (earliest_start → latest_end), not a single day.
+        # Post-processing: conflict detection
+        # Two items conflict when they share the same machine and their
+        # time windows overlap within the same schedule run.
+        # ------------------------------------------------------------------
+        conflict_count = _detect_conflicts(items)
+
+        # ------------------------------------------------------------------
+        # Utilization over actual schedule window
         # ------------------------------------------------------------------
         total_cap_minutes = _compute_capacity(
-            machines,
-            earliest_start or now,
-            latest_end or now,
+            machines, earliest_start or now, latest_end or now
+        )
+
+        # Makespan in minutes
+        makespan = (
+            int((latest_end - earliest_start).total_seconds() / 60)
+            if earliest_start and latest_end
+            else 0
         )
 
         run.total_operations = len(items)
         run.on_time_count = on_time_count
         run.late_count = late_count
         run.total_delay_minutes = total_delay
+        run.makespan_minutes = makespan
+        run.has_conflicts = conflict_count > 0
+        run.conflict_details = (
+            f"{conflict_count} conflicting item(s) detected." if conflict_count else ""
+        )
         run.machine_utilization_pct = (
             min(100.0, round((total_busy_minutes / total_cap_minutes) * 100, 1))
             if total_cap_minutes > 0
@@ -336,10 +317,8 @@ def compute_schedule(
         db.commit()
         db.refresh(run)
         logger.info(
-            "Schedule run %d committed: %d ops, util=%.1f%%",
-            run.id,
-            len(items),
-            run.machine_utilization_pct,
+            "Schedule run %d committed: %d ops, util=%.1f%%, conflicts=%d",
+            run.id, len(items), run.machine_utilization_pct, conflict_count,
         )
         return run
 
@@ -349,54 +328,69 @@ def compute_schedule(
         raise
 
 
+def _detect_conflicts(items: List[ScheduleItem]) -> int:
+    """
+    For each machine, sort items by start time and flag any pair where
+    item[i].end_time > item[i+1].start_time (overlap).
+    Returns total number of conflicted items.
+    """
+    from collections import defaultdict
+
+    by_machine: Dict[int, List[ScheduleItem]] = defaultdict(list)
+    for item in items:
+        by_machine[item.machine_id].append(item)
+
+    conflict_count = 0
+    for machine_items in by_machine.values():
+        sorted_items = sorted(machine_items, key=lambda x: x.start_time)
+        for i in range(len(sorted_items) - 1):
+            a, b = sorted_items[i], sorted_items[i + 1]
+            if a.end_time > b.start_time:  # overlap
+                a.is_conflict = True
+                b.is_conflict = True
+                a.conflict_with_item_id = b.id  # ids are None pre-flush; best effort
+                conflict_count += 2
+    return conflict_count
+
+
 def _compute_capacity(
     machines: List[Machine],
     window_start: datetime,
     window_end: datetime,
 ) -> int:
-    """
-    Sum the available shift minutes across all machines between
-    *window_start* and *window_end*.
-    """
+    """Sum available shift minutes across all machines over the schedule window."""
     total = 0
     current = window_start.replace(hour=0, minute=0, second=0, microsecond=0)
-    end_date = window_end.replace(hour=23, minute=59, second=59, microsecond=0)
+    end_date = window_end.replace(hour=23, minute=59, second=59)
 
     while current <= end_date:
         for machine in machines:
-            shift_days = _parse_shift_days(
-                machine.shift_days or DEFAULT_SHIFT_DAYS
-            )
+            shift_days = _parse_shift_days(machine.shift_days or DEFAULT_SHIFT_DAYS)
             if current.isoweekday() not in shift_days:
                 continue
             try:
                 shift_open, shift_close = _shift_bounds(machine, current)
             except ValueError:
                 continue
-            # Clip to the actual window boundaries
             effective_open = max(shift_open, window_start)
             effective_close = min(shift_close, window_end)
             if effective_close > effective_open:
-                total += int(
-                    (effective_close - effective_open).total_seconds() / 60
-                )
+                total += int((effective_close - effective_open).total_seconds() / 60)
         current += timedelta(days=1)
     return total
 
 
 # ---------------------------------------------------------------------------
-# Summary helpers
+# Summary helper
 # ---------------------------------------------------------------------------
 
 def get_schedule_summary(db: Session) -> dict:
-    """Return a lightweight dict summary of the system state."""
+    """Lightweight summary dict for the chat layer."""
     try:
         machines = db.query(Machine).all()
         work_orders = db.query(WorkOrder).all()
         latest: Optional[ScheduleRun] = (
-            db.query(ScheduleRun)
-            .order_by(ScheduleRun.created_at.desc())
-            .first()
+            db.query(ScheduleRun).order_by(ScheduleRun.created_at.desc()).first()
         )
         return {
             "machine_count": len(machines),
@@ -404,11 +398,10 @@ def get_schedule_summary(db: Session) -> dict:
             "pending_count": sum(
                 1 for wo in work_orders if wo.status in ("pending", "in_progress")
             ),
-            "utilization": (
-                latest.machine_utilization_pct if latest else 0.0
-            ),
+            "utilization": latest.machine_utilization_pct if latest else 0.0,
             "latest_run_id": latest.id if latest else None,
             "latest_algorithm": latest.algorithm if latest else None,
+            "has_conflicts": latest.has_conflicts if latest else False,
         }
     except Exception:
         logger.exception("get_schedule_summary failed")
