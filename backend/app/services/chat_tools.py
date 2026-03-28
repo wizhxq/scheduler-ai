@@ -1,9 +1,8 @@
-"""
-chat_tools.py
+"""chat_tools.py
 
 Backend tool functions that the AI assistant can call.
 These are the "actions" the AI takes when a user says things like:
-- "Prepare WO-101 by 3 days"
+- "Prepone WO-101 by 3 days"
 - "Set priority of WO-102 to urgent"
 - "Recompute the schedule"
 - "Add a CNC machine named CNC-01"
@@ -14,7 +13,7 @@ and returns a plain string result for the AI to include in its response.
 import json
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
-from app.models.models import WorkOrder, Machine, Operation, ScheduleRun
+from app.models.models import WorkOrder, Machine, Operation, ScheduleRun, ScheduleItem
 from app.services.scheduler import compute_schedule, get_schedule_summary
 
 
@@ -23,7 +22,6 @@ def create_machine_tool(db: Session, code: str, name: str) -> str:
     existing = db.query(Machine).filter(Machine.code == code).first()
     if existing:
         return f"Machine with code '{code}' already exists."
-
     machine = Machine(code=code, name=name, status="available")
     db.add(machine)
     db.commit()
@@ -35,7 +33,6 @@ def list_machines_tool(db: Session) -> str:
     machines = db.query(Machine).all()
     if not machines:
         return "No machines registered."
-
     res = "Current Machines:\n"
     for m in machines:
         res += f"- {m.name} ({m.code}): {m.status.value}\n"
@@ -53,7 +50,6 @@ def create_work_order_tool(
     existing = db.query(WorkOrder).filter(WorkOrder.code == code).first()
     if existing:
         return f"Work order '{code}' already exists."
-
     due_date = datetime.utcnow() + timedelta(days=due_date_days_from_now)
     wo = WorkOrder(
         code=code,
@@ -77,16 +73,13 @@ def add_operation_tool(
     wo = db.query(WorkOrder).filter(WorkOrder.code == work_order_code).first()
     if not wo:
         return f"Work order '{work_order_code}' not found."
-
     m = db.query(Machine).filter(Machine.code == machine_code).first()
     if not m:
         return f"Machine '{machine_code}' not found."
-
     last_op = db.query(Operation).filter(
         Operation.work_order_id == wo.id
     ).order_by(Operation.sequence_no.desc()).first()
     seq = (last_op.sequence_no + 1) if last_op else 1
-
     op = Operation(
         work_order_id=wo.id,
         machine_id=m.id,
@@ -105,7 +98,6 @@ def update_work_order_deadline(
     wo = db.query(WorkOrder).filter(WorkOrder.code == work_order_code).first()
     if not wo:
         return f"Work order '{work_order_code}' not found."
-
     try:
         wo.due_date = datetime.fromisoformat(new_due_date)
         db.commit()
@@ -121,10 +113,8 @@ def change_work_order_priority(
     wo = db.query(WorkOrder).filter(WorkOrder.code == work_order_code).first()
     if not wo:
         return f"Work order '{work_order_code}' not found."
-
     if not 1 <= priority <= 4:
         return "Priority must be between 1 (Critical) and 4 (Low)."
-
     wo.priority = priority
     db.commit()
     return f"Priority of {work_order_code} updated to {priority}."
@@ -147,7 +137,6 @@ def get_schedule_summary_text(db: Session) -> str:
     run = db.query(ScheduleRun).order_by(ScheduleRun.created_at.desc()).first()
     if not run:
         return "No schedule has been computed yet."
-
     summary = get_schedule_summary(db)
     return (
         f"Latest Schedule (Run ID: {run.id}, Algorithm: {run.algorithm}): "
@@ -155,6 +144,46 @@ def get_schedule_summary_text(db: Session) -> str:
         f"{run.on_time_count} on-time, "
         f"{run.late_count} late, "
         f"Utilization: {run.machine_utilization_pct}%"
+    )
+
+
+def prepone_work_order_tool(
+    db: Session,
+    work_order_code: str,
+    days: int,
+    direction: str = "prepone"
+) -> str:
+    """Prepone/postpone a work order and show cascading impact on other orders."""
+    wo = db.query(WorkOrder).filter(WorkOrder.code == work_order_code).first()
+    if not wo or not wo.due_date:
+        return f"Work order '{work_order_code}' not found or has no due date."
+    
+    # Adjust the due date
+    if direction == "prepone":
+        wo.due_date = wo.due_date - timedelta(days=days)
+    else:
+        wo.due_date = wo.due_date + timedelta(days=days)
+    
+    db.commit()
+    
+    # Recompute schedule to see impact
+    run = compute_schedule(db, label=f"after-{direction}-{work_order_code}")
+    
+    # Analyze impact
+    late_orders = db.query(ScheduleItem).filter(
+        ScheduleItem.schedule_run_id == run.id,
+        ScheduleItem.is_late == True
+    ).count()
+    
+    affected_orders = db.query(ScheduleItem).filter(
+        ScheduleItem.schedule_run_id == run.id
+    ).count()
+    
+    return (
+        f"✓ {direction.capitalize()}d {work_order_code} by {days} days. "
+        f"New due date: {wo.due_date.date()}. "
+        f"Impact: {late_orders} orders now late out of {affected_orders} total, "
+        f"utilization: {run.machine_utilization_pct}%."
     )
 
 
@@ -242,6 +271,22 @@ TOOLS = [
                     "priority": {"type": "integer", "description": "1=Critical, 2=High, 3=Medium, 4=Low"}
                 },
                 "required": ["work_order_code", "priority"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "prepone_work_order",
+            "description": "Prepone or postpone a work order by X days and show the cascading impact on other orders.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "work_order_code": {"type": "string", "description": "Work order code e.g. WO-100"},
+                    "days": {"type": "integer", "description": "Number of days to shift"},
+                    "direction": {"type": "string", "enum": ["prepone", "postpone"], "description": "Direction to shift: prepone (earlier) or postpone (later)", "default": "prepone"}
+                },
+                "required": ["work_order_code", "days"]
             }
         }
     },
