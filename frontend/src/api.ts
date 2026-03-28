@@ -8,6 +8,10 @@ const api = axios.create({ baseURL: BASE })
 export const getMachines = () => api.get('/api/machines').then(r => r.data)
 export const createMachine = (data: any) => api.post('/api/machines', data).then(r => r.data)
 export const deleteMachine = (id: number) => api.delete(`/api/machines/${id}`)
+export const setMachineMaintenance = (id: number, data: { start: string; end: string; notes?: string }) =>
+  api.post(`/api/machines/${id}/maintenance`, data).then(r => r.data)
+export const clearMachineMaintenance = (id: number) =>
+  api.delete(`/api/machines/${id}/maintenance`).then(r => r.data)
 
 // Work Orders
 export const getWorkOrders = () => api.get('/api/work-orders').then(r => r.data)
@@ -23,7 +27,7 @@ export const getOperations = (workOrderId?: number) => {
 export const createOperation = (data: any) => api.post('/api/operations', data).then(r => r.data)
 export const deleteOperation = (id: number) => api.delete(`/api/operations/${id}`)
 
-// Schedule — default algorithm is EDD (was typo'd as DDO)
+// Schedule
 export const computeSchedule = (algorithm: string = 'EDD') =>
   api.post('/api/schedule/compute', null, { params: { algorithm } }).then(r => r.data)
 export const getLatestSchedule = () => api.get('/api/schedule/latest').then(r => r.data)

@@ -30,7 +30,6 @@ def _create_machine(db: Session, code: str, name: str, **_) -> str:
         return f"Successfully added machine '{name}' (code: {code})."
     except Exception as exc:
         db.rollback()
-        logger.exception("_create_machine failed")
         return f"Error creating machine: {exc}"
 
 
@@ -42,7 +41,8 @@ def _list_machines(db: Session, **_) -> str:
     for m in machines:
         status = m.status.value if hasattr(m.status, "value") else str(m.status)
         shift_info = f"shift {m.shift_start or '08:00'}–{m.shift_end or '18:00'}"
-        lines.append(f"- {m.name} ({m.code}) | {status} | {shift_info}")
+        maint = f" | ⚠️ {m.maintenance_notes}" if status == "maintenance" and m.maintenance_notes else ""
+        lines.append(f"- {m.name} ({m.code}) | {status} | {shift_info}{maint}")
     return "\n".join(lines)
 
 
@@ -67,12 +67,8 @@ def _list_work_orders(db: Session, status_filter: str = "all", **_) -> str:
 
 
 def _create_work_order(
-    db: Session,
-    code: str,
-    customer_name: str = None,
-    priority: int = 3,
-    due_date_days_from_now: int = 7,
-    **_,
+    db: Session, code: str, customer_name: str = None,
+    priority: int = 3, due_date_days_from_now: int = 7, **_,
 ) -> str:
     if db.query(WorkOrder).filter(WorkOrder.code == code).first():
         return f"Work order '{code}' already exists."
@@ -80,32 +76,18 @@ def _create_work_order(
         return "Priority must be 1 (Critical), 2 (High), 3 (Medium), or 4 (Low)."
     try:
         due_date = datetime.utcnow() + timedelta(days=due_date_days_from_now)
-        wo = WorkOrder(
-            code=code,
-            customer_name=customer_name,
-            priority=priority,
-            due_date=due_date,
-            status="pending",
-        )
+        wo = WorkOrder(code=code, customer_name=customer_name, priority=priority, due_date=due_date, status="pending")
         db.add(wo)
         db.commit()
-        return (
-            f"Created work order {code} for {customer_name or 'unnamed customer'} "
-            f"(priority: {priority}, due: {due_date.date()})."
-        )
+        return f"Created work order {code} for {customer_name or 'unnamed customer'} (priority: {priority}, due: {due_date.date()})."
     except Exception as exc:
         db.rollback()
-        logger.exception("_create_work_order failed")
         return f"Error creating work order: {exc}"
 
 
 def _add_operation(
-    db: Session,
-    work_order_code: str,
-    machine_code: str,
-    processing_minutes: int,
-    setup_minutes: int = None,
-    **_,
+    db: Session, work_order_code: str, machine_code: str,
+    processing_minutes: int, setup_minutes: int = None, **_,
 ) -> str:
     wo = db.query(WorkOrder).filter(WorkOrder.code == work_order_code).first()
     if not wo:
@@ -114,35 +96,19 @@ def _add_operation(
     if not machine:
         return f"Machine '{machine_code}' not found."
     try:
-        last_op = (
-            db.query(Operation)
-            .filter(Operation.work_order_id == wo.id)
-            .order_by(Operation.sequence_no.desc())
-            .first()
-        )
+        last_op = db.query(Operation).filter(Operation.work_order_id == wo.id).order_by(Operation.sequence_no.desc()).first()
         seq = (last_op.sequence_no + 1) if last_op else 1
-        op = Operation(
-            work_order_id=wo.id,
-            machine_id=machine.id,
-            sequence_no=seq,
-            processing_minutes=processing_minutes,
-            setup_minutes=setup_minutes,
-        )
+        op = Operation(work_order_id=wo.id, machine_id=machine.id, sequence_no=seq,
+                       processing_minutes=processing_minutes, setup_minutes=setup_minutes)
         db.add(op)
         db.commit()
-        return (
-            f"Added operation (step {seq}) to {work_order_code}: "
-            f"{processing_minutes} min processing on {machine_code}."
-        )
+        return f"Added operation (step {seq}) to {work_order_code}: {processing_minutes} min on {machine_code}."
     except Exception as exc:
         db.rollback()
-        logger.exception("_add_operation failed")
         return f"Error adding operation: {exc}"
 
 
-def _update_work_order_deadline(
-    db: Session, work_order_code: str, new_due_date: str, **_
-) -> str:
+def _update_work_order_deadline(db: Session, work_order_code: str, new_due_date: str, **_) -> str:
     wo = db.query(WorkOrder).filter(WorkOrder.code == work_order_code).first()
     if not wo:
         return f"Work order '{work_order_code}' not found."
@@ -151,19 +117,13 @@ def _update_work_order_deadline(
         db.commit()
         return f"Due date of {work_order_code} updated to {new_due_date}."
     except ValueError:
-        return (
-            f"Invalid date format: {new_due_date!r}. "
-            "Use ISO format e.g. '2025-04-10T17:00:00'."
-        )
+        return f"Invalid date format: {new_due_date!r}. Use ISO format e.g. '2026-04-10T17:00:00'."
     except Exception as exc:
         db.rollback()
-        logger.exception("_update_work_order_deadline failed")
         return f"Error updating deadline: {exc}"
 
 
-def _change_work_order_priority(
-    db: Session, work_order_code: str, priority: int, **_
-) -> str:
+def _change_work_order_priority(db: Session, work_order_code: str, priority: int, **_) -> str:
     wo = db.query(WorkOrder).filter(WorkOrder.code == work_order_code).first()
     if not wo:
         return f"Work order '{work_order_code}' not found."
@@ -174,23 +134,13 @@ def _change_work_order_priority(
         wo.priority = priority
         db.commit()
         priority_label = {1: "Critical", 2: "High", 3: "Medium", 4: "Low"}
-        return (
-            f"Priority of {work_order_code} changed from "
-            f"{priority_label.get(old, old)} to {priority_label.get(priority, priority)}."
-        )
+        return f"Priority of {work_order_code} changed from {priority_label.get(old, old)} to {priority_label.get(priority, priority)}."
     except Exception as exc:
         db.rollback()
-        logger.exception("_change_work_order_priority failed")
         return f"Error changing priority: {exc}"
 
 
-def _shift_work_order(
-    db: Session,
-    work_order_code: str,
-    days: int,
-    direction: str = "prepone",
-    **_,
-) -> str:
+def _shift_work_order(db: Session, work_order_code: str, days: int, direction: str = "prepone", **_) -> str:
     wo = db.query(WorkOrder).filter(WorkOrder.code == work_order_code).first()
     if not wo:
         return f"Work order '{work_order_code}' not found."
@@ -205,14 +155,9 @@ def _shift_work_order(
         wo.due_date = wo.due_date - delta if direction == "prepone" else wo.due_date + delta
         db.flush()
         run = compute_schedule(db, label=f"{direction}-{work_order_code}")
-        late_count = (
-            db.query(ScheduleItem)
-            .filter(
-                ScheduleItem.schedule_run_id == run.id,
-                ScheduleItem.is_late.is_(True),
-            )
-            .count()
-        )
+        late_count = db.query(ScheduleItem).filter(
+            ScheduleItem.schedule_run_id == run.id, ScheduleItem.is_late.is_(True)
+        ).count()
         return (
             f"{direction.capitalize()}d {work_order_code} by {days} day(s). "
             f"New due date: {wo.due_date.date()}. "
@@ -221,7 +166,6 @@ def _shift_work_order(
         )
     except Exception as exc:
         db.rollback()
-        logger.exception("_shift_work_order failed")
         return f"Error shifting work order: {exc}"
 
 
@@ -231,37 +175,79 @@ def _recompute_schedule(db: Session, algorithm: str = "EDD", **_) -> str:
         summary = get_schedule_summary(db)
         return (
             f"Schedule recomputed (Run #{run.id}, algorithm: {algorithm}). "
-            f"Machines: {summary['machine_count']}, "
-            f"Work orders: {summary['work_order_count']} "
-            f"({summary['pending_count']} pending), "
-            f"Utilization: {summary['utilization']}%, "
+            f"Machines: {summary['machine_count']}, Work orders: {summary['work_order_count']} "
+            f"({summary['pending_count']} pending), Utilization: {summary['utilization']}%, "
             f"On-time: {run.on_time_count}, Late: {run.late_count}, "
             f"Conflicts: {'yes' if run.has_conflicts else 'none'}."
         )
     except Exception as exc:
-        logger.exception("_recompute_schedule failed")
         return f"Error recomputing schedule: {exc}"
 
 
 def _get_schedule_summary(db: Session, **_) -> str:
-    run: ScheduleRun | None = (
-        db.query(ScheduleRun).order_by(ScheduleRun.created_at.desc()).first()
-    )
+    run: ScheduleRun | None = db.query(ScheduleRun).order_by(ScheduleRun.created_at.desc()).first()
     if not run:
         return "No schedule has been computed yet. Ask me to recompute the schedule."
     summary = get_schedule_summary(db)
     return (
         f"**Latest Schedule (Run #{run.id}, {run.algorithm})** \u2014 "
-        f"{run.total_operations} operations | "
-        f"{run.on_time_count} on-time | "
-        f"{run.late_count} late | "
-        f"Total delay: {run.total_delay_minutes} min | "
-        f"Utilization: {run.machine_utilization_pct}% | "
+        f"{run.total_operations} operations | {run.on_time_count} on-time | {run.late_count} late | "
+        f"Total delay: {run.total_delay_minutes} min | Utilization: {run.machine_utilization_pct}% | "
         f"Makespan: {getattr(run, 'makespan_minutes', 0)} min | "
         f"Conflicts: {'detected' if run.has_conflicts else 'none'} | "
-        f"Machines: {summary['machine_count']} | "
-        f"Work orders: {summary['work_order_count']}"
+        f"Machines: {summary['machine_count']} | Work orders: {summary['work_order_count']}"
     )
+
+
+def _set_maintenance_window(
+    db: Session,
+    machine_code: str,
+    start_date: str,
+    end_date: str,
+    notes: str = "",
+    **_,
+) -> str:
+    machine = db.query(Machine).filter(Machine.code == machine_code).first()
+    if not machine:
+        return f"Machine '{machine_code}' not found."
+    try:
+        datetime.fromisoformat(start_date)
+        datetime.fromisoformat(end_date)
+    except ValueError:
+        return f"Invalid date format. Use ISO format e.g. '2026-04-10T08:00:00'."
+    try:
+        machine.status = MachineStatus.maintenance
+        machine.maintenance_notes = notes or f"Scheduled maintenance {start_date[:10]} to {end_date[:10]}"
+        db.commit()
+        # Recompute schedule so maintenance is reflected
+        run = compute_schedule(db, label=f"post-maintenance-{machine_code}")
+        return (
+            f"Machine {machine.name} ({machine_code}) set to maintenance from {start_date[:10]} to {end_date[:10]}. "
+            f"Notes: '{machine.maintenance_notes}'. "
+            f"Schedule recomputed: {run.total_operations} ops, "
+            f"utilization now {run.machine_utilization_pct}%."
+        )
+    except Exception as exc:
+        db.rollback()
+        return f"Error setting maintenance: {exc}"
+
+
+def _clear_maintenance(db: Session, machine_code: str, **_) -> str:
+    machine = db.query(Machine).filter(Machine.code == machine_code).first()
+    if not machine:
+        return f"Machine '{machine_code}' not found."
+    try:
+        machine.status = MachineStatus.available
+        machine.maintenance_notes = ""
+        db.commit()
+        run = compute_schedule(db, label=f"post-clear-maintenance-{machine_code}")
+        return (
+            f"Machine {machine.name} ({machine_code}) is now available. "
+            f"Schedule recomputed: utilization {run.machine_utilization_pct}%."
+        )
+    except Exception as exc:
+        db.rollback()
+        return f"Error clearing maintenance: {exc}"
 
 
 # ---------------------------------------------------------------------------
@@ -279,19 +265,17 @@ TOOL_REGISTRY: Dict[str, Any] = {
     "shift_work_order": _shift_work_order,
     "recompute_schedule": _recompute_schedule,
     "get_schedule_summary": _get_schedule_summary,
+    "set_maintenance_window": _set_maintenance_window,
+    "clear_maintenance": _clear_maintenance,
 }
 
 
 def dispatch_tool(db: Session, tool_name: str, arguments: Dict[str, Any]) -> str:
     fn = TOOL_REGISTRY.get(tool_name)
     if fn is None:
-        logger.warning("dispatch_tool: unknown tool %r", tool_name)
         return f"Unknown tool: {tool_name!r}. Available: {list(TOOL_REGISTRY)}"
-    # Safety guard: ensure arguments is always a dict, never None or other type
     if not isinstance(arguments, dict):
-        logger.warning("dispatch_tool: arguments was %r for tool %r, defaulting to {}", type(arguments), tool_name)
         arguments = {}
-    logger.info("Dispatching tool %r with args %s", tool_name, arguments)
     return fn(db=db, **arguments)
 
 
@@ -349,18 +333,10 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "code": {"type": "string", "description": "Order code, e.g. WO-500"},
-                    "customer_name": {"type": "string", "description": "Customer name"},
-                    "priority": {
-                        "type": "integer",
-                        "description": "1=Critical, 2=High, 3=Medium, 4=Low",
-                        "default": 3,
-                    },
-                    "due_date_days_from_now": {
-                        "type": "integer",
-                        "description": "Days from today until deadline",
-                        "default": 7,
-                    },
+                    "code": {"type": "string"},
+                    "customer_name": {"type": "string"},
+                    "priority": {"type": "integer", "description": "1=Critical 2=High 3=Medium 4=Low", "default": 3},
+                    "due_date_days_from_now": {"type": "integer", "default": 7},
                 },
                 "required": ["code"],
             },
@@ -370,14 +346,14 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "add_operation",
-            "description": "Append a processing step (operation) to a work order. Always use exact machine codes from list_machines.",
+            "description": "Append a processing step to a work order.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "work_order_code": {"type": "string"},
-                    "machine_code": {"type": "string", "description": "Exact machine code from list_machines"},
+                    "machine_code": {"type": "string"},
                     "processing_minutes": {"type": "integer"},
-                    "setup_minutes": {"type": "integer", "description": "Optional setup time override"},
+                    "setup_minutes": {"type": "integer"},
                 },
                 "required": ["work_order_code", "machine_code", "processing_minutes"],
             },
@@ -387,7 +363,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "update_work_order_deadline",
-            "description": "Change the due date of a work order to an exact datetime.",
+            "description": "Change the due date of a work order.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -407,7 +383,7 @@ TOOLS = [
                 "type": "object",
                 "properties": {
                     "work_order_code": {"type": "string"},
-                    "priority": {"type": "integer", "description": "1=Critical, 2=High, 3=Medium, 4=Low"},
+                    "priority": {"type": "integer", "description": "1=Critical 2=High 3=Medium 4=Low"},
                 },
                 "required": ["work_order_code", "priority"],
             },
@@ -417,17 +393,13 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "shift_work_order",
-            "description": "Move a work order's due date earlier (prepone) or later (postpone) by N days and recompute schedule.",
+            "description": "Move a work order due date earlier or later by N days and recompute schedule.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "work_order_code": {"type": "string"},
-                    "days": {"type": "integer", "description": "Number of days to shift"},
-                    "direction": {
-                        "type": "string",
-                        "enum": ["prepone", "postpone"],
-                        "default": "prepone",
-                    },
+                    "days": {"type": "integer"},
+                    "direction": {"type": "string", "enum": ["prepone", "postpone"], "default": "prepone"},
                 },
                 "required": ["work_order_code", "days"],
             },
@@ -437,15 +409,11 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "recompute_schedule",
-            "description": "Recalculate the full production schedule. Call this after any mutation.",
+            "description": "Recalculate the full production schedule.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "algorithm": {
-                        "type": "string",
-                        "enum": ["EDD", "SPT", "FIFO", "CRITICAL_RATIO"],
-                        "default": "EDD",
-                    }
+                    "algorithm": {"type": "string", "enum": ["EDD", "SPT", "FIFO", "CRITICAL_RATIO"], "default": "EDD"}
                 },
             },
         },
@@ -454,8 +422,39 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_schedule_summary",
-            "description": "Return KPI summary of the most recently computed schedule including utilization, late ops, and conflicts.",
+            "description": "Return KPI summary of the most recently computed schedule.",
             "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_maintenance_window",
+            "description": "Put a machine into maintenance mode for a scheduled window. The scheduler will exclude this machine during maintenance. Always recomputes schedule after.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "machine_code": {"type": "string", "description": "Exact machine code e.g. CNC-01"},
+                    "start_date": {"type": "string", "description": "ISO datetime when maintenance starts e.g. '2026-04-01T08:00:00'"},
+                    "end_date": {"type": "string", "description": "ISO datetime when maintenance ends e.g. '2026-04-02T18:00:00'"},
+                    "notes": {"type": "string", "description": "Reason for maintenance e.g. 'Oil change and calibration'"},
+                },
+                "required": ["machine_code", "start_date", "end_date"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "clear_maintenance",
+            "description": "Mark a machine as available again after maintenance is done and recompute schedule.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "machine_code": {"type": "string"},
+                },
+                "required": ["machine_code"],
+            },
         },
     },
 ]
