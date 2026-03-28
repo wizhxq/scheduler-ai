@@ -5,10 +5,8 @@ interface Message {
   role: 'user' | 'assistant'
   content: string
   actions?: any[]
-  isVoice?: boolean
 }
 
-// Web Speech API type declarations
 declare global {
   interface Window {
     SpeechRecognition: any
@@ -17,19 +15,46 @@ declare global {
 }
 
 const SUGGESTIONS = [
-  "What machines do we have?",
-  "Prepone WO-100 by 3 days and show impact",
-  "Create work order WO-200 for Customer B with priority 1",
-  "Compute the optimal schedule",
-  "Which orders will be late?",
+  'What machines do we have?',
+  'List all work orders',
+  'Recompute the schedule',
+  'Which orders will be late?',
+  'Show the schedule summary',
 ]
+
+// ---------------------------------------------------------------------------
+// Minimal markdown renderer: bold, inline-code, bullet lines
+// ---------------------------------------------------------------------------
+function renderMarkdown(text: string): JSX.Element[] {
+  return text.split('\n').map((line, i) => {
+    const isBullet = line.startsWith('- ') || line.startsWith('* ')
+    const content = (isBullet ? line.slice(2) : line)
+      .split(/(\*\*[^*]+\*\*|`[^`]+`)/g)
+      .map((part, j) => {
+        if (part.startsWith('**') && part.endsWith('**'))
+          return <strong key={j} className="text-white font-semibold">{part.slice(2, -2)}</strong>
+        if (part.startsWith('`') && part.endsWith('`'))
+          return <code key={j} className="font-mono text-xs bg-white/10 px-1 rounded">{part.slice(1, -1)}</code>
+        return <span key={j}>{part}</span>
+      })
+    return isBullet
+      ? <div key={i} className="flex gap-2"><span className="text-blue-400 mt-0.5">•</span><span>{content}</span></div>
+      : <div key={i} className={line === '' ? 'h-2' : ''}>{content}</div>
+  })
+}
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
-      content: `Hi! I'm your AI scheduling assistant. I can help you:\n- Add or list machines & work orders\n- Prepone / postpone orders and show the cascading impact\n- Compute and summarise the production schedule\n- Change priorities and deadlines\nYou can type or use the microphone button to speak to me.`
-    }
+      content:
+        `Hi! I'm your AI scheduling assistant. I can help you:\n` +
+        `- Add or list machines & work orders\n` +
+        `- Prepone / postpone orders and show cascading schedule impact\n` +
+        `- Compute and summarise the production schedule (EDD, SPT, FIFO, Critical Ratio)\n` +
+        `- Change priorities, deadlines, and recompute in one step\n\n` +
+        `Try one of the suggestions below, or just type naturally.`,
+    },
   ])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -43,12 +68,9 @@ export default function ChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // Pulse animation during recording
   useEffect(() => {
     if (isRecording) {
-      pulseRef.current = setInterval(() => {
-        setRecordingPulse(p => !p)
-      }, 500)
+      pulseRef.current = setInterval(() => setRecordingPulse(p => !p), 500)
     } else {
       clearInterval(pulseRef.current)
       setRecordingPulse(false)
@@ -56,25 +78,22 @@ export default function ChatPage() {
     return () => clearInterval(pulseRef.current)
   }, [isRecording])
 
-  // Stable `send` reference via useCallback so toggleVoice closure is never stale
   const send = useCallback(async (text: string) => {
     if (!text.trim() || loading) return
-    const userMsg: Message = { role: 'user', content: text }
-    setMessages(prev => [...prev, userMsg])
+    setMessages(prev => [...prev, { role: 'user', content: text }])
     setInput('')
     setLoading(true)
     try {
       const res = await sendChat(text)
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: res.reply,
-        actions: res.actions_taken
-      }])
+      setMessages(prev => [
+        ...prev,
+        { role: 'assistant', content: res.reply, actions: res.actions_taken },
+      ])
     } catch (e: any) {
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: `Error: ${e.response?.data?.detail || 'Something went wrong'}`
-      }])
+      setMessages(prev => [
+        ...prev,
+        { role: 'assistant', content: `Error: ${e.response?.data?.detail || e.message || 'Something went wrong'}` },
+      ])
     } finally {
       setLoading(false)
     }
@@ -87,57 +106,36 @@ export default function ChatPage() {
     }
   }
 
-  // `send` in deps array ensures onend closure always calls the current version
   const toggleVoice = useCallback(() => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SpeechRecognition) {
-      alert('Voice input is not supported in this browser. Please use Chrome or Edge.')
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SR) {
+      alert('Voice input is not supported in this browser. Use Chrome or Edge.')
       return
     }
-    if (isRecording) {
-      recognitionRef.current?.stop()
-      setIsRecording(false)
-      return
-    }
-    const recognition = new SpeechRecognition()
+    if (isRecording) { recognitionRef.current?.stop(); setIsRecording(false); return }
+
+    const recognition = new SR()
     recognition.lang = 'en-US'
     recognition.interimResults = true
     recognition.continuous = false
     recognitionRef.current = recognition
 
     recognition.onstart = () => setIsRecording(true)
-
     recognition.onresult = (event: any) => {
       let transcript = ''
-      for (let i = event.resultIndex; i < event.results.length; i++) {
+      for (let i = event.resultIndex; i < event.results.length; i++)
         transcript += event.results[i][0].transcript
-      }
       setInput(transcript)
     }
-
     recognition.onend = () => {
       setIsRecording(false)
-      // Use functional updater to read latest input without stale closure,
-      // then dispatch to the stable `send` reference captured above.
-      setInput(prev => {
-        if (prev.trim()) {
-          setTimeout(() => send(prev), 0)
-        }
-        return prev
-      })
+      setInput(prev => { if (prev.trim()) setTimeout(() => send(prev), 0); return prev })
     }
-
     recognition.onerror = (event: any) => {
-      console.error('Speech error:', event.error)
       setIsRecording(false)
-      if (event.error !== 'aborted') {
-        setMessages(prev => [...prev, {
-          role: 'assistant',
-          content: `Voice error: ${event.error}. Please try again or type your message.`
-        }])
-      }
+      if (event.error !== 'aborted')
+        setMessages(prev => [...prev, { role: 'assistant', content: `Voice error: ${event.error}. Please type instead.` }])
     }
-
     recognition.start()
   }, [isRecording, send])
 
@@ -145,24 +143,25 @@ export default function ChatPage() {
     if (tool.includes('create') || tool.includes('add')) return 'text-green-400'
     if (tool.includes('delete') || tool.includes('remove')) return 'text-red-400'
     if (tool.includes('recompute') || tool.includes('schedule')) return 'text-blue-400'
-    if (tool.includes('priority') || tool.includes('deadline')) return 'text-yellow-400'
-    return 'text-purple-400'
+    if (tool.includes('shift') || tool.includes('priority') || tool.includes('deadline')) return 'text-yellow-400'
+    if (tool.includes('list') || tool.includes('summary')) return 'text-purple-400'
+    return 'text-gray-400'
   }
 
   return (
     <div className="flex flex-col h-screen max-h-screen bg-[#0f1117]">
       {/* Header */}
-      <div className="flex items-center gap-3 px-6 py-4 border-b border-white/10 bg-[#0f1117]">
+      <div className="flex items-center gap-3 px-6 py-4 border-b border-white/10 bg-[#0f1117] flex-shrink-0">
         <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white text-sm font-bold">AI</div>
         <div>
           <h1 className="text-white font-semibold text-sm">Scheduling Assistant</h1>
-          <p className="text-gray-500 text-xs">Powered by Groq + Llama 3.3 · Voice & Text</p>
+          <p className="text-gray-500 text-xs">Groq · Llama 3.3 · Voice & Text</p>
         </div>
         {isRecording && (
           <div className={`ml-auto flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium transition-all ${
             recordingPulse ? 'bg-red-600/30 text-red-400' : 'bg-red-600/10 text-red-500'
           }`}>
-            <span className={`w-2 h-2 rounded-full bg-red-500 ${ recordingPulse ? 'opacity-100' : 'opacity-30' }`} />
+            <span className={`w-2 h-2 rounded-full bg-red-500 ${recordingPulse ? 'opacity-100' : 'opacity-30'}`} />
             Listening...
           </div>
         )}
@@ -171,27 +170,33 @@ export default function ChatPage() {
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
         {messages.map((m, i) => (
-          <div key={i} className={`flex ${ m.role === 'user' ? 'justify-end' : 'justify-start' }`}>
-            <div className={`max-w-[80%] rounded-2xl px-4 shadow-sm ${
+          <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div className={`max-w-[82%] rounded-2xl px-4 shadow-sm ${
               m.role === 'user'
                 ? 'bg-blue-600 text-white rounded-tr-none py-3'
                 : 'bg-[#1a1f2e] text-gray-200 border border-white/10 rounded-tl-none py-3'
             }`}>
-              <div className="whitespace-pre-wrap leading-relaxed text-sm">{m.content}</div>
-              {/* Actions taken panel */}
+              {/* Render markdown for assistant, plain for user */}
+              <div className="leading-relaxed text-sm space-y-0.5">
+                {m.role === 'assistant' ? renderMarkdown(m.content) : m.content}
+              </div>
+
+              {/* Actions panel */}
               {m.actions && m.actions.length > 0 && (
                 <div className="mt-3 pt-3 border-t border-white/10">
                   <p className="text-[10px] text-gray-500 uppercase font-bold tracking-widest mb-2">Actions Executed</p>
-                  <div className="space-y-1">
+                  <div className="space-y-1.5">
                     {m.actions.map((act: any, idx: number) => (
                       <div key={idx} className="flex items-start gap-2 text-xs">
-                        <span className="mt-0.5">⚡</span>
+                        <span className="mt-0.5 text-gray-500">⚡</span>
                         <div>
-                          <span className={`font-semibold ${getActionColor(act.tool || '')}`}>
-                            {act.tool || act.type}
+                          <span className={`font-semibold font-mono ${getActionColor(act.tool || '')}`}>
+                            {act.tool}
                           </span>
                           {act.result && (
-                            <p className="text-gray-400 mt-0.5">{typeof act.result === 'string' ? act.result : JSON.stringify(act.result)}</p>
+                            <p className="text-gray-400 mt-0.5 leading-snug">
+                              {typeof act.result === 'string' ? act.result : JSON.stringify(act.result)}
+                            </p>
                           )}
                         </div>
                       </div>
@@ -202,6 +207,7 @@ export default function ChatPage() {
             </div>
           </div>
         ))}
+
         {loading && (
           <div className="flex justify-start">
             <div className="bg-[#1a1f2e] border border-white/10 rounded-2xl rounded-tl-none px-5 py-3">
@@ -216,13 +222,14 @@ export default function ChatPage() {
         <div ref={bottomRef} />
       </div>
 
-      {/* Suggestions */}
-      <div className="px-6 pb-2 flex gap-2 flex-wrap">
+      {/* Suggestion chips */}
+      <div className="px-6 pb-2 flex gap-2 flex-wrap flex-shrink-0">
         {SUGGESTIONS.map(s => (
           <button
             key={s}
             onClick={() => send(s)}
-            className="text-xs px-3 py-1.5 rounded-full bg-white/5 hover:bg-white/10 text-gray-400 border border-white/5 transition-colors"
+            disabled={loading}
+            className="text-xs px-3 py-1.5 rounded-full bg-white/5 hover:bg-white/10 disabled:opacity-40 text-gray-400 border border-white/5 transition-colors"
           >
             {s}
           </button>
@@ -230,23 +237,20 @@ export default function ChatPage() {
       </div>
 
       {/* Input area */}
-      <div className="px-6 pb-6 pt-2">
+      <div className="px-6 pb-6 pt-2 flex-shrink-0">
         <div className="relative flex items-end gap-2">
-          <div className="relative flex-1">
-            <textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKey}
-              placeholder={isRecording ? 'Listening... speak now' : 'Type or speak your command...'}
-              className={`w-full text-gray-200 text-sm rounded-xl pl-4 pr-4 py-3 border outline-none resize-none transition-colors ${
-                isRecording
-                  ? 'bg-red-950/30 border-red-500/50 focus:border-red-400'
-                  : 'bg-[#1a1f2e] border-white/10 focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50'
-              }`}
-              rows={2}
-            />
-          </div>
-          {/* Voice button */}
+          <textarea
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={handleKey}
+            placeholder={isRecording ? 'Listening... speak now' : 'Ask anything — e.g. "Prepone WO-200 by 2 days"'}
+            className={`flex-1 text-gray-200 text-sm rounded-xl pl-4 pr-4 py-3 border outline-none resize-none transition-colors ${
+              isRecording
+                ? 'bg-red-950/30 border-red-500/50'
+                : 'bg-[#1a1f2e] border-white/10 focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20'
+            }`}
+            rows={2}
+          />
           <button
             onClick={toggleVoice}
             disabled={loading}
@@ -257,28 +261,27 @@ export default function ChatPage() {
                 : 'bg-[#1a1f2e] border-white/10 text-gray-400 hover:text-white hover:border-white/30'
             }`}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill={isRecording ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+              fill={isRecording ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2">
               <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
               <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
               <line x1="12" y1="19" x2="12" y2="23" />
               <line x1="8" y1="23" x2="16" y2="23" />
             </svg>
           </button>
-          {/* Send button */}
           <button
             onClick={() => send(input)}
             disabled={!input.trim() || loading}
             className="p-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:cursor-not-allowed text-white transition-colors"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+              fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="22" y1="2" x2="11" y2="13" />
               <polygon points="22 2 15 22 11 13 2 9 22 2" />
             </svg>
           </button>
         </div>
-        <p className="text-[10px] text-center text-gray-600 mt-2">
-          Powered by Groq + Llama 3.3 · Voice input via Web Speech API
-        </p>
+        <p className="text-[10px] text-center text-gray-600 mt-2">Groq · Llama 3.3 · Voice via Web Speech API</p>
       </div>
     </div>
   )

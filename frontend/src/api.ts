@@ -13,6 +13,7 @@ export const deleteMachine = (id: number) => api.delete(`/api/machines/${id}`)
 export const getWorkOrders = () => api.get('/api/work-orders').then(r => r.data)
 export const createWorkOrder = (data: any) => api.post('/api/work-orders', data).then(r => r.data)
 export const deleteWorkOrder = (id: number) => api.delete(`/api/work-orders/${id}`)
+export const updateWorkOrder = (id: number, data: any) => api.patch(`/api/work-orders/${id}`, data).then(r => r.data)
 
 // Operations
 export const getOperations = (workOrderId?: number) => {
@@ -22,12 +23,13 @@ export const getOperations = (workOrderId?: number) => {
 export const createOperation = (data: any) => api.post('/api/operations', data).then(r => r.data)
 export const deleteOperation = (id: number) => api.delete(`/api/operations/${id}`)
 
-// Schedule
-export const computeSchedule = (algorithm: string = 'DDO') =>
+// Schedule — default algorithm is EDD (was typo'd as DDO)
+export const computeSchedule = (algorithm: string = 'EDD') =>
   api.post('/api/schedule/compute', null, { params: { algorithm } }).then(r => r.data)
 export const getLatestSchedule = () => api.get('/api/schedule/latest').then(r => r.data)
-export const getScheduleHistory = () => api.get('/api/schedule/history').then(r => r.data)
-export const getBottlenecks = () => api.get('/api/schedule/bottlenecks').then(r => r.data)
+export const getScheduleHistory = (limit = 10) =>
+  api.get('/api/schedule/history', { params: { limit } }).then(r => r.data)
+export const getKPIs = () => api.get('/api/schedule/kpis').then(r => r.data)
 
 // Chat
 export const sendChat = (message: string) =>

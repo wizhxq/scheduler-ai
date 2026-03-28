@@ -1,12 +1,19 @@
-
 import { useState, useEffect } from 'react'
 import { getLatestSchedule, computeSchedule } from '../api'
+
+const ALGORITHMS = [
+  { value: 'EDD', label: 'EDD — Earliest Due Date' },
+  { value: 'SPT', label: 'SPT — Shortest Processing Time' },
+  { value: 'FIFO', label: 'FIFO — First In First Out' },
+  { value: 'CRITICAL_RATIO', label: 'Critical Ratio' },
+]
 
 export default function SchedulePage() {
   const [schedule, setSchedule] = useState<any>(null)
   const [loading, setLoading] = useState(false)
   const [computing, setComputing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [algorithm, setAlgorithm] = useState('EDD')
 
   const load = async () => {
     setLoading(true)
@@ -25,18 +32,16 @@ export default function SchedulePage() {
     }
   }
 
-  useEffect(() => {
-    load()
-  }, [])
+  useEffect(() => { load() }, [])
 
   const handleCompute = async () => {
     setComputing(true)
     setError(null)
     try {
-      const data = await computeSchedule()
+      const data = await computeSchedule(algorithm)
       setSchedule(data)
-    } catch (err) {
-      setError('Failed to compute schedule')
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Failed to compute schedule')
     } finally {
       setComputing(false)
     }
@@ -56,16 +61,30 @@ export default function SchedulePage() {
         <div>
           <h1 className="text-2xl font-bold text-white">Production Schedule</h1>
           <p className="text-gray-400 text-sm mt-1">
-            {schedule ? `Last computed: ${new Date(schedule.computed_at).toLocaleString()}` : 'No schedule computed yet'}
+            {schedule
+              // created_at is the correct field — computed_at doesn't exist
+              ? `Last computed: ${new Date(schedule.created_at).toLocaleString()}`
+              : 'No schedule computed yet'}
           </p>
         </div>
-        <button
-          onClick={handleCompute}
-          disabled={computing}
-          className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors"
-        >
-          {computing ? 'Computing...' : 'Compute Schedule'}
-        </button>
+        <div className="flex items-center gap-3">
+          <select
+            value={algorithm}
+            onChange={e => setAlgorithm(e.target.value)}
+            className="bg-[#1a1f2e] border border-white/10 text-white text-sm rounded-xl px-3 py-2.5 outline-none focus:border-blue-500/50"
+          >
+            {ALGORITHMS.map(a => (
+              <option key={a.value} value={a.value}>{a.label}</option>
+            ))}
+          </select>
+          <button
+            onClick={handleCompute}
+            disabled={computing}
+            className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors"
+          >
+            {computing ? 'Computing...' : 'Compute Schedule'}
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -77,77 +96,97 @@ export default function SchedulePage() {
       {schedule ? (
         <>
           {/* KPI Stats */}
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-5 gap-4">
+            <div className="bg-[#1a1f2e] border border-white/5 rounded-2xl p-4">
+              <div className="text-gray-400 text-xs mb-1">Algorithm</div>
+              <div className="text-lg font-bold text-white">{schedule.algorithm}</div>
+            </div>
             <div className="bg-[#1a1f2e] border border-white/5 rounded-2xl p-4">
               <div className="text-gray-400 text-xs mb-1">Utilization</div>
               <div className="text-2xl font-bold text-white">{schedule.machine_utilization_pct}%</div>
             </div>
             <div className="bg-[#1a1f2e] border border-white/5 rounded-2xl p-4">
               <div className="text-gray-400 text-xs mb-1">On-Time Ops</div>
-              <div className="text-2xl font-bold text-white">{schedule.on_time_count} / {schedule.total_operations}</div>
+              <div className="text-2xl font-bold text-emerald-400">{schedule.on_time_count} / {schedule.total_operations}</div>
             </div>
             <div className="bg-[#1a1f2e] border border-white/5 rounded-2xl p-4">
               <div className="text-gray-400 text-xs mb-1">Late Ops</div>
-              <div className="text-2xl font-bold text-red-400">{schedule.late_count}</div>
+              <div className={`text-2xl font-bold ${schedule.late_count > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                {schedule.late_count}
+              </div>
             </div>
             <div className="bg-[#1a1f2e] border border-white/5 rounded-2xl p-4">
               <div className="text-gray-400 text-xs mb-1">Conflicts</div>
               <div className={`text-2xl font-bold ${schedule.has_conflicts ? 'text-amber-400' : 'text-emerald-400'}`}>
-                {schedule.has_conflicts ? 'Detected' : 'None'}
+                {schedule.has_conflicts ? '⚠ Yes' : '✓ None'}
               </div>
             </div>
           </div>
 
           {/* Schedule Table */}
-          <div className="bg-[#1a1f2e] border border-white/5 rounded-2xl overflow-hidden">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-white/5 bg-white/5">
-                  <th className="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Machine</th>
-                  <th className="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Work Order</th>
-                  <th className="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Start</th>
-                  <th className="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">End</th>
-                  <th className="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {schedule.items.map((item: any) => (
-                  <tr key={item.id} className="hover:bg-white/5 transition-colors">
-                    <td className="px-6 py-4">
-                      <div className="text-sm font-medium text-white">{item.machine_name}</div>
-                      <div className="text-xs text-gray-500">ID: {item.machine_id}</div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="text-sm font-medium text-white">{item.work_order_name}</div>
-                      <div className="text-xs text-gray-500">Op: {item.operation_id}</div>
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-300">
-                      {new Date(item.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-300">
-                      {new Date(item.end_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </td>
-                    <td className="px-6 py-4">
-                      {item.is_late ? (
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-500/10 text-red-400 border border-red-500/20">
-                          Late ({item.delay_minutes}m)
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                          On Time
-                        </span>
-                      )}
-                      {item.is_conflict && (
-                        <span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                          Conflict
-                        </span>
-                      )}
-                    </td>
+          {schedule.items && schedule.items.length > 0 ? (
+            <div className="bg-[#1a1f2e] border border-white/5 rounded-2xl overflow-hidden">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-white/5 bg-white/5">
+                    <th className="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Machine</th>
+                    <th className="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Work Order</th>
+                    <th className="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Start</th>
+                    <th className="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">End</th>
+                    <th className="px-6 py-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">Status</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {schedule.items.map((item: any) => (
+                    <tr key={item.id} className="hover:bg-white/5 transition-colors">
+                      <td className="px-6 py-4">
+                        <div className="text-sm font-medium text-white">{item.machine_name}</div>
+                        <div className="text-xs text-gray-500 font-mono">ID #{item.machine_id}</div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="text-sm font-medium text-white">{item.work_order_name}</div>
+                        <div className="text-xs text-gray-500">Op #{item.operation_id}</div>
+                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-300">
+                        {new Date(item.start_time).toLocaleString([], {
+                          month: 'short', day: 'numeric',
+                          hour: '2-digit', minute: '2-digit'
+                        })}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-300">
+                        {new Date(item.end_time).toLocaleString([], {
+                          month: 'short', day: 'numeric',
+                          hour: '2-digit', minute: '2-digit'
+                        })}
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {item.is_late ? (
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-500/10 text-red-400 border border-red-500/20">
+                              Late +{item.delay_minutes}m
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                              On Time
+                            </span>
+                          )}
+                          {item.is_conflict && (
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                              ⚠ Conflict
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="bg-[#1a1f2e] border border-white/5 rounded-2xl p-8 text-center">
+              <p className="text-gray-500 text-sm">No operations scheduled. Add work orders with operations first.</p>
+            </div>
+          )}
         </>
       ) : (
         <div className="bg-[#1a1f2e] border border-white/5 rounded-2xl p-12 text-center">

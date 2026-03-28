@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { getWorkOrders, createWorkOrder, getMachines, getOperations, createOperation, deleteOperation } from '../api'
+import { getWorkOrders, createWorkOrder, deleteWorkOrder, getMachines, getOperations, createOperation, deleteOperation } from '../api'
 
 const PRIORITY_CONFIG: Record<number, { label: string; color: string; dot: string }> = {
   1: { label: 'Critical', color: 'bg-red-500/20 text-red-400 border border-red-500/30', dot: 'bg-red-500' },
@@ -14,22 +14,35 @@ export default function WorkOrdersPage() {
   const [operations, setOperations] = useState<Record<number, any[]>>({})
   const [expanded, setExpanded] = useState<number | null>(null)
   const [showForm, setShowForm] = useState(false)
-  
+  const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null)
+
   // New WO form state
   const [code, setCode] = useState('')
   const [customerName, setCustomerName] = useState('')
   const [dueDate, setDueDate] = useState('')
   const [priority, setPriority] = useState(3)
 
-  // New Operation form state
-  const [opMachine, setOpMachine] = useState<number>(0)
-  const [opDuration, setOpDuration] = useState(60)
+  // Per-WO operation form state (keyed by wo id)
+  const [opMachineByWo, setOpMachineByWo] = useState<Record<number, number>>({})
+  const [opDurationByWo, setOpDurationByWo] = useState<Record<number, number>>({})
 
   const load = async () => {
     const [wo, m] = await Promise.all([getWorkOrders(), getMachines()])
     setWorkOrders(wo)
     setMachines(m)
-    if (m.length > 0 && opMachine === 0) setOpMachine(m[0].id)
+    // Initialise per-WO op form defaults for any WO that doesn't have one yet
+    if (m.length > 0) {
+      setOpMachineByWo(prev => {
+        const next = { ...prev }
+        wo.forEach((w: any) => { if (!(w.id in next)) next[w.id] = m[0].id })
+        return next
+      })
+      setOpDurationByWo(prev => {
+        const next = { ...prev }
+        wo.forEach((w: any) => { if (!(w.id in next)) next[w.id] = 60 })
+        return next
+      })
+    }
   }
 
   useEffect(() => { load() }, [])
@@ -53,8 +66,10 @@ export default function WorkOrdersPage() {
     await createWorkOrder({
       code,
       customer_name: customerName || null,
-      due_date: dueDate ? new Date(dueDate).toISOString() : new Date(Date.now() + 7 * 86400000).toISOString(),
-      priority
+      due_date: dueDate
+        ? new Date(dueDate).toISOString()
+        : new Date(Date.now() + 7 * 86400000).toISOString(),
+      priority,
     })
     setCode('')
     setCustomerName('')
@@ -64,13 +79,22 @@ export default function WorkOrdersPage() {
     await load()
   }
 
+  const handleDeleteWO = async (id: number) => {
+    await deleteWorkOrder(id)
+    setDeleteConfirm(null)
+    if (expanded === id) setExpanded(null)
+    await load()
+  }
+
   const handleAddOp = async (woId: number) => {
+    const machineId = opMachineByWo[woId] || (machines[0]?.id ?? 0)
+    const duration = opDurationByWo[woId] || 60
     const currentOps = operations[woId] || []
     await createOperation({
       work_order_id: woId,
-      machine_id: opMachine,
+      machine_id: machineId,
       sequence_no: currentOps.length + 1,
-      processing_minutes: opDuration
+      processing_minutes: duration,
     })
     await loadOps(woId)
   }
@@ -105,7 +129,7 @@ export default function WorkOrdersPage() {
                 value={code}
                 onChange={e => setCode(e.target.value)}
                 placeholder="e.g. WO-001"
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:border-blue-500/50 outline-none"
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:border-blue-500/50 outline-none placeholder-gray-600"
               />
             </div>
             <div>
@@ -114,7 +138,7 @@ export default function WorkOrdersPage() {
                 value={customerName}
                 onChange={e => setCustomerName(e.target.value)}
                 placeholder="e.g. Acme Corp"
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:border-blue-500/50 outline-none"
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:border-blue-500/50 outline-none placeholder-gray-600"
               />
             </div>
             <div>
@@ -131,7 +155,7 @@ export default function WorkOrdersPage() {
               <select
                 value={priority}
                 onChange={e => setPriority(Number(e.target.value))}
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:border-blue-500/50 outline-none"
+                className="w-full bg-[#0f1117] border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:border-blue-500/50 outline-none"
               >
                 <option value={1}>1 - Critical</option>
                 <option value={2}>2 - High</option>
@@ -152,32 +176,68 @@ export default function WorkOrdersPage() {
           const config = PRIORITY_CONFIG[wo.priority as keyof typeof PRIORITY_CONFIG] || PRIORITY_CONFIG[3]
           const isExpanded = expanded === wo.id
           const ops = operations[wo.id] || []
+          const opMachine = opMachineByWo[wo.id] || (machines[0]?.id ?? 0)
+          const opDuration = opDurationByWo[wo.id] || 60
 
           return (
             <div key={wo.id} className={`bg-[#1a1f2e] border border-white/5 rounded-2xl overflow-hidden transition-all ${isExpanded ? 'ring-1 ring-blue-500/30' : 'hover:border-white/10'}`}>
-              <div 
-                className="p-5 flex items-center justify-between cursor-pointer"
-                onClick={() => handleExpand(wo.id)}
-              >
-                <div className="flex items-center gap-4">
-                  <div className={`w-2 h-2 rounded-full ${config.dot}`} />
+              <div className="p-5 flex items-center justify-between">
+                {/* Left: priority dot + WO info — clickable to expand */}
+                <div
+                  className="flex items-center gap-4 flex-1 cursor-pointer"
+                  onClick={() => handleExpand(wo.id)}
+                >
+                  <div className={`w-2 h-2 rounded-full flex-shrink-0 ${config.dot}`} />
                   <div>
                     <h3 className="text-white font-bold flex items-center gap-2">
                       {wo.code}
                       <span className="text-gray-500 font-normal text-sm">| {wo.customer_name || 'Generic'}</span>
                     </h3>
-                    <p className="text-gray-500 text-xs mt-1">Due: {new Date(wo.due_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
+                    <p className="text-gray-500 text-xs mt-1">
+                      Due: {new Date(wo.due_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    </p>
                   </div>
                   <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-tighter ${config.color}`}>
                     {config.label}
                   </span>
                 </div>
-                <div className="flex items-center gap-6">
-                  <div className="text-right">
-                    <p className="text-white text-xs font-semibold">{ops.length} steps</p>
+
+                {/* Right: op count + delete + chevron */}
+                <div className="flex items-center gap-4">
+                  <div className="text-right cursor-pointer" onClick={() => handleExpand(wo.id)}>
+                    <p className="text-white text-xs font-semibold">{ops.length > 0 ? `${ops.length} steps` : '0 steps'}</p>
                     <p className="text-gray-500 text-[10px]">Operations</p>
                   </div>
-                  <span className={`text-gray-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`}>▼</span>
+
+                  {/* Delete work order */}
+                  {deleteConfirm === wo.id ? (
+                    <div className="flex gap-2">
+                      <button
+                        onClick={e => { e.stopPropagation(); handleDeleteWO(wo.id) }}
+                        className="text-xs px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-lg transition-colors font-semibold"
+                      >
+                        Confirm
+                      </button>
+                      <button
+                        onClick={e => { e.stopPropagation(); setDeleteConfirm(null) }}
+                        className="text-xs px-3 py-1.5 bg-white/5 hover:bg-white/10 text-gray-300 rounded-lg transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={e => { e.stopPropagation(); setDeleteConfirm(wo.id) }}
+                      className="text-xs text-red-400 hover:text-red-300 transition-colors px-2 py-1"
+                    >
+                      Delete
+                    </button>
+                  )}
+
+                  <span
+                    className={`text-gray-500 transition-transform cursor-pointer ${isExpanded ? 'rotate-180' : ''}`}
+                    onClick={() => handleExpand(wo.id)}
+                  >▼</span>
                 </div>
               </div>
 
@@ -187,10 +247,10 @@ export default function WorkOrdersPage() {
                     <h4 className="text-white font-semibold text-sm">Routing Steps</h4>
                     <p className="text-gray-500 text-[10px] uppercase">Process Flow</p>
                   </div>
-                  
+
                   {ops.length > 0 ? (
                     <div className="space-y-2">
-                      {ops.slice().sort((a,b) => a.sequence_no - b.sequence_no).map((op) => {
+                      {ops.slice().sort((a, b) => a.sequence_no - b.sequence_no).map((op) => {
                         const m = machines.find(mach => mach.id === op.machine_id)
                         return (
                           <div key={op.id} className="flex items-center gap-3 bg-white/5 border border-white/5 rounded-xl p-3">
@@ -205,8 +265,8 @@ export default function WorkOrdersPage() {
                               <p className="text-gray-300 text-xs font-semibold">{op.processing_minutes} min</p>
                               <p className="text-gray-500 text-[10px]">Duration</p>
                             </div>
-                            <button 
-                              onClick={(e) => { e.stopPropagation(); handleDeleteOp(wo.id, op.id) }}
+                            <button
+                              onClick={e => { e.stopPropagation(); handleDeleteOp(wo.id, op.id) }}
                               className="p-2 text-gray-600 hover:text-red-400 transition-colors"
                             >
                               ✕
@@ -221,29 +281,36 @@ export default function WorkOrdersPage() {
                     </div>
                   )}
 
+                  {/* Add operation form — per-WO state, no shared global */}
                   <div className="mt-6 pt-4 border-t border-white/5">
                     <h4 className="text-gray-400 text-[10px] font-bold uppercase tracking-widest mb-3">Add Production Step</h4>
                     <div className="flex items-end gap-3">
                       <div className="flex-1">
                         <label className="block text-gray-500 text-[10px] mb-1">Select Machine</label>
-                        <select 
-                          value={opMachine} 
-                          onChange={e => setOpMachine(Number(e.target.value))}
-                          className="w-full bg-white/10 border border-white/10 rounded-lg px-3 py-2 text-white text-xs outline-none focus:border-blue-500/50"
+                        {/* bg-[#0f1117] makes option text visible on all OS/browsers */}
+                        <select
+                          value={opMachine}
+                          onChange={e => setOpMachineByWo(prev => ({ ...prev, [wo.id]: Number(e.target.value) }))}
+                          className="w-full bg-[#0f1117] border border-white/10 rounded-lg px-3 py-2 text-white text-xs outline-none focus:border-blue-500/50"
                         >
-                          {machines.map(m => <option key={m.id} value={m.id}>{m.name} ({m.code})</option>)}
+                          {machines.map(m => (
+                            <option key={m.id} value={m.id} className="bg-[#0f1117] text-white">
+                              {m.name} ({m.code})
+                            </option>
+                          ))}
                         </select>
                       </div>
                       <div className="w-24">
                         <label className="block text-gray-500 text-[10px] mb-1">Mins</label>
-                        <input 
-                          type="number" 
-                          value={opDuration} 
-                          onChange={e => setOpDuration(Number(e.target.value))}
-                          className="w-full bg-white/10 border border-white/10 rounded-lg px-3 py-2 text-white text-xs outline-none focus:border-blue-500/50"
+                        <input
+                          type="number"
+                          value={opDuration}
+                          min={1}
+                          onChange={e => setOpDurationByWo(prev => ({ ...prev, [wo.id]: Number(e.target.value) }))}
+                          className="w-full bg-[#0f1117] border border-white/10 rounded-lg px-3 py-2 text-white text-xs outline-none focus:border-blue-500/50"
                         />
                       </div>
-                      <button 
+                      <button
                         onClick={() => handleAddOp(wo.id)}
                         className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white text-xs font-bold rounded-lg transition-all"
                       >
