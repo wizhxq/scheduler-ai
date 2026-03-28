@@ -11,6 +11,7 @@ from app.services.chat_tools import (
     update_work_order_deadline,
     change_work_order_priority,
     recompute_schedule,
+    prepone_work_order_tool,
     get_schedule_summary_text,
     TOOLS
 )
@@ -100,6 +101,8 @@ def chat(request: ChatRequest, db: Session = Depends(get_db)):
                     result = change_work_order_priority(db, **args)
                 elif fn == "recompute_schedule":
                     result = recompute_schedule(db)
+                elif fn == "prepone_work_order":
+                    result = prepone_work_order_tool(db, **args)
                 elif fn == "get_schedule_summary":
                     result = get_schedule_summary_text(db)
                 else:
