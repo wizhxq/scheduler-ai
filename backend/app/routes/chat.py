@@ -4,6 +4,10 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.schemas.schemas import ChatRequest, ChatResponse
 from app.services.chat_tools import (
+    create_machine_tool,
+    list_machines_tool,
+    create_work_order_tool,
+    add_operation_tool,
     update_work_order_deadline,
     change_work_order_priority,
     recompute_schedule,
@@ -23,7 +27,7 @@ try:
             api_key=GROQ_API_KEY,
             base_url="https://api.groq.com/openai/v1"
         )
-        AI_MODEL = "llama-3.3-70b-versatile"  # Free on Groq
+        AI_MODEL = "llama-3.3-70b-versatile" # Free on Groq
     else:
         client = None
 except Exception:
@@ -37,12 +41,15 @@ You help operators manage their production schedule by interpreting natural
 language commands and calling the appropriate tools.
 
 You can:
+- Add or list machines
+- Create work orders
+- Add processing steps (operations) to work orders
 - Update work order deadlines
 - Change work order priorities
 - Recompute the schedule after changes
 - Summarize the current schedule and explain impacts
 
-Always call recompute_schedule after making any changes.
+Always call recompute_schedule after making any changes (adding machines, work orders, etc.).
 Always explain what you did and what the impact is on the schedule.
 """
 
@@ -79,13 +86,21 @@ def chat(request: ChatRequest, db: Session = Depends(get_db)):
                 fn = tool_call.function.name
                 args = json.loads(tool_call.function.arguments)
 
-                if fn == "update_work_order_deadline":
+                if fn == "create_machine":
+                    result = create_machine_tool(db, **args)
+                elif fn == "list_machines":
+                    result = list_machines_tool(db)
+                elif fn == "create_work_order":
+                    result = create_work_order_tool(db, **args)
+                elif fn == "add_operation":
+                    result = add_operation_tool(db, **args)
+                elif fn == "update_work_order_deadline":
                     result = update_work_order_deadline(db, **args)
                 elif fn == "change_work_order_priority":
                     result = change_work_order_priority(db, **args)
                 elif fn == "recompute_schedule":
                     result = recompute_schedule(db)
-                elif fn == "get_schedule_summary_text":
+                elif fn == "get_schedule_summary":
                     result = get_schedule_summary_text(db)
                 else:
                     result = {"error": f"Unknown tool: {fn}"}
