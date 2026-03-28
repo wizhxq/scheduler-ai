@@ -6,12 +6,13 @@ const STATUS_COLORS: Record<string, string> = {
   busy: 'bg-blue-500/20 text-blue-400 border border-blue-500/30',
   maintenance: 'bg-amber-500/20 text-amber-400 border border-amber-500/30',
   offline: 'bg-red-500/20 text-red-400 border border-red-500/30',
+  available: 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30',
 }
 
 export default function MachinesPage() {
   const [machines, setMachines] = useState<any[]>([])
   const [name, setName] = useState('')
-  const [capacity, setCapacity] = useState(1)
+  const [code, setCode] = useState('')
   const [loading, setLoading] = useState(false)
   const [adding, setAdding] = useState(false)
   const [showForm, setShowForm] = useState(false)
@@ -20,14 +21,14 @@ export default function MachinesPage() {
   useEffect(() => { load() }, [])
 
   const handleAdd = async () => {
-    if (!name.trim()) return
-    setLoading(true)
-    await createMachine({ name, capacity_per_hour: capacity })
+    if (!name.trim() || !code.trim()) return
+    setAdding(true)
+    await createMachine({ code, name })
     setName('')
-    setCapacity(1)
+    setCode('')
     setShowForm(false)
     await load()
-    setLoading(false)
+    setAdding(false)
   }
 
   const handleDelete = async (id: number) => {
@@ -41,7 +42,7 @@ export default function MachinesPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">Machines</h1>
-          <p className="text-gray-500 text-sm mt-1">{machines.length} machine{machines.length !== 1 ? 's' : ''} registered</p>
+          <p className="text-gray-400 text-sm mt-1">{machines.length} machine{machines.length !== 1 ? 's' : ''} registered</p>
         </div>
         <button
           onClick={() => setShowForm(!showForm)}
@@ -53,40 +54,41 @@ export default function MachinesPage() {
 
       {/* Add Machine Form */}
       {showForm && (
-        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
-          <h2 className="text-white font-semibold mb-4">New Machine</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="sm:col-span-2">
-              <label className="block text-xs text-gray-400 mb-1.5 font-medium">Machine Name</label>
+        <div className="bg-[#1a2235] rounded-2xl border border-white/10 p-6">
+          <h2 className="text-lg font-semibold text-white mb-4">New Machine</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-400 mb-1">Machine Name</label>
               <input
-                className="w-full bg-gray-800 border border-gray-700 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-600"
+                type="text"
                 value={name}
                 onChange={e => setName(e.target.value)}
                 placeholder="e.g. CNC Machine A"
+                className="w-full bg-[#0d1526] border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-400 mb-1.5 font-medium">Capacity / hr</label>
+              <label className="block text-sm font-medium text-gray-400 mb-1">Machine Code</label>
               <input
-                className="w-full bg-gray-800 border border-gray-700 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                type="number"
-                min={1}
-                value={capacity}
-                onChange={e => setCapacity(Number(e.target.value))}
+                type="text"
+                value={code}
+                onChange={e => setCode(e.target.value)}
+                placeholder="e.g. CNC-01"
+                className="w-full bg-[#0d1526] border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
           </div>
           <div className="flex gap-3 mt-4">
             <button
               onClick={handleAdd}
-              disabled={loading || !name.trim()}
-              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors"
+              disabled={adding}
+              className="px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white text-sm font-semibold rounded-xl transition-colors"
             >
-              {loading ? 'Adding...' : 'Add Machine'}
+              {adding ? 'Adding...' : 'Add Machine'}
             </button>
             <button
               onClick={() => setShowForm(false)}
-              className="px-5 py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm font-medium rounded-xl transition-colors"
+              className="px-5 py-2 bg-white/10 hover:bg-white/20 text-white text-sm font-semibold rounded-xl transition-colors"
             >
               Cancel
             </button>
@@ -94,47 +96,37 @@ export default function MachinesPage() {
         </div>
       )}
 
-      {/* Machine Cards Grid */}
-      {machines.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-center">
+      {/* Machines Grid */}
+      {machines.length === 0 && !showForm ? (
+        <div className="flex flex-col items-center justify-center py-24 text-center">
           <div className="text-5xl mb-4">⚙️</div>
-          <p className="text-gray-400 font-medium">No machines yet</p>
-          <p className="text-gray-600 text-sm mt-1">Add your first machine to get started</p>
+          <h3 className="text-xl font-semibold text-white mb-2">No machines yet</h3>
+          <p className="text-gray-400">Add your first machine to get started.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {machines.map((m) => {
-            const status = m.status || 'idle'
-            return (
-              <div
-                key={m.id}
-                className="bg-gray-900 border border-gray-800 rounded-2xl p-5 hover:border-gray-700 transition-colors group"
-              >
-                <div className="flex items-start justify-between mb-4">
-                  <div className="w-10 h-10 rounded-xl bg-gray-800 flex items-center justify-center text-xl">
-                    ⚙️
-                  </div>
-                  <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${STATUS_COLORS[status] || STATUS_COLORS.idle}`}>
-                    {status.charAt(0).toUpperCase() + status.slice(1)}
-                  </span>
+          {machines.map(machine => (
+            <div key={machine.id} className="bg-[#1a2235] rounded-2xl border border-white/10 p-5 flex flex-col gap-3 hover:border-white/20 transition-colors">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-white font-semibold text-base">{machine.name}</p>
+                  <p className="text-gray-400 text-sm font-mono mt-0.5">{machine.code}</p>
                 </div>
-                <h3 className="text-white font-semibold text-sm">{m.name}</h3>
-                <p className="text-gray-500 text-xs mt-1">ID #{m.id}</p>
-                <div className="mt-4 pt-4 border-t border-gray-800 flex items-center justify-between">
-                  <div>
-                    <p className="text-xs text-gray-500">Capacity</p>
-                    <p className="text-white font-semibold text-sm">{m.capacity_per_hour} <span className="text-gray-500 font-normal">units/hr</span></p>
-                  </div>
-                  <button
-                    onClick={() => handleDelete(m.id)}
-                    className="opacity-0 group-hover:opacity-100 text-red-500 hover:text-red-400 text-xs font-medium transition-all"
-                  >
-                    Remove
-                  </button>
-                </div>
+                <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${STATUS_COLORS[machine.status] || STATUS_COLORS.offline}`}>
+                  {machine.status}
+                </span>
               </div>
-            )
-          })}
+              <div className="flex items-center justify-between pt-2 border-t border-white/10">
+                <span className="text-gray-500 text-xs">ID #{machine.id}</span>
+                <button
+                  onClick={() => handleDelete(machine.id)}
+                  className="text-red-400 hover:text-red-300 text-sm font-medium transition-colors"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>
