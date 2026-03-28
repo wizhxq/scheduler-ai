@@ -110,44 +110,57 @@ def get_schedule_history(
 
 
 # ---------------------------------------------------------------------------
-# Schedule Item — manual reschedule from calendar
+# Schedule Item — PATCH: move a single op (called per-item when WO is dragged)
 # ---------------------------------------------------------------------------
 
 @router.patch("/items/{item_id}", response_model=ScheduleItemOut)
 def update_schedule_item(
     item_id: int,
-    body: RescheduleBody,          # <-- single Pydantic model, not two Body() params
+    body: RescheduleBody,
     db: Session = Depends(get_db),
 ):
     """
-    Move a scheduled operation to a new start/end time (called from calendar drag-drop).
-    Updates the parent work order's due_date so calendar and schedule stay in sync.
+    Move one scheduled operation to a new start/end time.
+    Called in a loop from the frontend when the user drags an entire Work Order
+    (all constituent operations shift by the same delta).
     """
     item = db.query(ScheduleItem).filter(ScheduleItem.id == item_id).first()
     if not item:
-        raise HTTPException(status_code=404, detail="Schedule item not found.")
+        raise HTTPException(status_code=404, detail=f"Schedule item {item_id} not found.")
 
     item.start_time = body.start_time
     item.end_time   = body.end_time
 
-    wo = db.query(WorkOrder).filter(WorkOrder.id == item.work_order_id).first()
-    if wo:
-        if wo.due_date and body.end_time > wo.due_date:
-            item.is_late       = True
-            item.delay_minutes = int((body.end_time - wo.due_date).total_seconds() / 60)
+    # Recalculate lateness only — never crash on missing due_date
+    try:
+        wo = db.query(WorkOrder).filter(WorkOrder.id == item.work_order_id).first()
+        if wo and wo.due_date:
+            if body.end_time > wo.due_date:
+                item.is_late       = True
+                item.delay_minutes = int((body.end_time - wo.due_date).total_seconds() / 60)
+            else:
+                item.is_late       = False
+                item.delay_minutes = 0
         else:
             item.is_late       = False
             item.delay_minutes = 0
-        wo.due_date = body.end_time
+    except Exception:
+        # Never let lateness recalc crash the reschedule
+        item.is_late       = False
+        item.delay_minutes = 0
 
     db.commit()
     db.refresh(item)
 
     machine_name = ""
     wo_name      = ""
-    m = db.query(Machine).filter(Machine.id == item.machine_id).first()
-    if m:  machine_name = m.name
-    if wo: wo_name      = wo.code
+    try:
+        m = db.query(Machine).filter(Machine.id == item.machine_id).first()
+        if m: machine_name = m.name
+        wo2 = db.query(WorkOrder).filter(WorkOrder.id == item.work_order_id).first()
+        if wo2: wo_name = wo2.code
+    except Exception:
+        pass
 
     return ScheduleItemOut(
         id=item.id,
