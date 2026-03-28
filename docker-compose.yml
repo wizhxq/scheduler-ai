@@ -9,11 +9,13 @@ services:
     env_file:
       - .env
     environment:
-      # Store the SQLite file on a named volume so it survives docker-compose --build
+      # sqlite:///  = relative,  sqlite:////  = absolute with leading /
+      # /data/scheduler.db is an absolute path, so we need exactly 4 slashes total:
+      #   sqlite:// + //data/scheduler.db  = sqlite:////data/scheduler.db  ✓
       - DATABASE_URL=sqlite:////data/scheduler.db
     volumes:
-      - ./backend:/app          # live-reload source
-      - scheduler_db:/data      # ← persistent DB volume, never wiped by rebuilds
+      - ./backend:/app          # live-reload source code
+      - scheduler_db:/data      # persistent DB — survives docker-compose --build
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   frontend:
