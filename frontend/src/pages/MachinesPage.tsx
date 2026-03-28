@@ -21,10 +21,10 @@ export default function MachinesPage() {
   const [machines, setMachines] = useState<any[]>([])
   const [name, setName] = useState('')
   const [code, setCode] = useState('')
-  const [loading, setLoading] = useState(false)
   const [adding, setAdding] = useState(false)
   const [showForm, setShowForm] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null)
+  const [deleting, setDeleting] = useState<number | null>(null)
 
   const load = () => getMachines().then(setMachines)
   useEffect(() => { load() }, [])
@@ -32,21 +32,32 @@ export default function MachinesPage() {
   const handleAdd = async () => {
     if (!name.trim() || !code.trim()) return
     setAdding(true)
-    await createMachine({ code, name })
-    setName('')
-    setCode('')
-    setShowForm(false)
-    await load()
-    setAdding(false)
+    try {
+      await createMachine({ code, name })
+      setName('')
+      setCode('')
+      setShowForm(false)
+      await load()
+    } finally {
+      setAdding(false)
+    }
   }
 
-  const handleDelete = async (id: number) => {
-    await deleteMachine(id)
-    setDeleteConfirm(null)
-    await load()
+  const handleDelete = async (e: React.MouseEvent, id: number) => {
+    e.stopPropagation()
+    setDeleting(id)
+    try {
+      await deleteMachine(id)
+      setDeleteConfirm(null)
+      await load()
+    } catch (err) {
+      console.error('Delete failed:', err)
+    } finally {
+      setDeleting(null)
+    }
   }
 
-  const availableCount = machines.filter(m => (m.status || 'available') === 'available' || (m.status || 'available') === 'idle').length
+  const availableCount = machines.filter(m => ['available', 'idle'].includes(m.status || 'available')).length
   const busyCount = machines.filter(m => m.status === 'busy').length
   const maintenanceCount = machines.filter(m => m.status === 'maintenance').length
 
@@ -146,6 +157,7 @@ export default function MachinesPage() {
             const status = machine.status || 'available'
             const statusClass = STATUS_COLORS[status] || STATUS_COLORS.available
             const statusIcon = STATUS_ICONS[status] || '✅'
+            const isDeleting = deleting === machine.id
             return (
               <div key={machine.id} className="bg-[#1a1f2e] border border-white/5 rounded-2xl p-5 space-y-3 hover:border-white/10 transition-colors">
                 <div className="flex items-start justify-between">
@@ -160,16 +172,18 @@ export default function MachinesPage() {
 
                 <div className="border-t border-white/5 pt-3 flex items-center justify-between">
                   <span className="text-gray-500 text-xs">ID #{machine.id}</span>
+
                   {deleteConfirm === machine.id ? (
                     <div className="flex gap-2">
                       <button
-                        onClick={() => handleDelete(machine.id)}
-                        className="text-xs px-3 py-1 bg-red-600 hover:bg-red-500 text-white rounded-lg transition-colors"
+                        onClick={(e) => handleDelete(e, machine.id)}
+                        disabled={isDeleting}
+                        className="text-xs px-3 py-1 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white rounded-lg transition-colors font-semibold"
                       >
-                        Confirm
+                        {isDeleting ? '...' : 'Confirm'}
                       </button>
                       <button
-                        onClick={() => setDeleteConfirm(null)}
+                        onClick={(e) => { e.stopPropagation(); setDeleteConfirm(null) }}
                         className="text-xs px-3 py-1 bg-white/5 hover:bg-white/10 text-gray-300 rounded-lg transition-colors"
                       >
                         Cancel
@@ -177,8 +191,8 @@ export default function MachinesPage() {
                     </div>
                   ) : (
                     <button
-                      onClick={() => setDeleteConfirm(machine.id)}
-                      className="text-xs text-red-400 hover:text-red-300 transition-colors"
+                      onClick={(e) => { e.stopPropagation(); setDeleteConfirm(machine.id) }}
+                      className="text-xs text-red-400 hover:text-red-300 transition-colors px-2 py-1"
                     >
                       Delete
                     </button>
