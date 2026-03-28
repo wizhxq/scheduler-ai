@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 from typing import Optional, List, Any
 from enum import Enum
@@ -34,6 +34,7 @@ class MachineCreate(BaseModel):
 
 
 class MachineOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
     id: int
     code: str
     name: str
@@ -46,9 +47,6 @@ class MachineOut(BaseModel):
     default_setup_minutes: int = 15
     utilization_target_pct: float = 85.0
     maintenance_notes: str = ""
-
-    class Config:
-        from_attributes = True
 
 
 # --- Work Order Schemas ---
@@ -72,6 +70,7 @@ class WorkOrderUpdate(BaseModel):
 
 
 class WorkOrderOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
     id: int
     code: str
     customer_name: Optional[str]
@@ -88,9 +87,6 @@ class WorkOrderOut(BaseModel):
     estimated_hours: Optional[float] = None
     actual_hours: Optional[float] = None
 
-    class Config:
-        from_attributes = True
-
 
 # --- Operation Schemas ---
 class OperationCreate(BaseModel):
@@ -103,6 +99,7 @@ class OperationCreate(BaseModel):
 
 
 class OperationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
     id: int
     work_order_id: int
     machine_id: int
@@ -115,12 +112,10 @@ class OperationOut(BaseModel):
     completed_at: Optional[datetime] = None
     actual_minutes: Optional[int] = None
 
-    class Config:
-        from_attributes = True
-
 
 # --- Schedule Schemas ---
 class ScheduleItemOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
     id: int
     work_order_id: int
     operation_id: int
@@ -133,11 +128,9 @@ class ScheduleItemOut(BaseModel):
     is_late: bool = False
     is_conflict: bool = False
 
-    class Config:
-        from_attributes = True
-
 
 class ScheduleRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
     schedule_run_id: int
     run_label: str
     algorithm: str = "EDD"
@@ -150,9 +143,6 @@ class ScheduleRunOut(BaseModel):
     has_conflicts: bool = False
     conflict_details: str = ""
     items: List[ScheduleItemOut]
-
-    class Config:
-        from_attributes = True
 
 
 # --- KPI Schema ---
