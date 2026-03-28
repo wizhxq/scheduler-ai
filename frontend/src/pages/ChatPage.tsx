@@ -19,13 +19,13 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([
     { 
       role: 'assistant', 
-      content: 'Hi! I can help you manage your machine schedule.
+      content: `Hi! I can help you manage your machine schedule.
 
 Ask me to:
 - Compute a schedule
 - Adjust deadlines or priorities
 - Show work orders or machines
-- Explain what is running on each machine' 
+- Explain what is running on each machine` 
     }
   ])
   const [input, setInput] = useState('')
