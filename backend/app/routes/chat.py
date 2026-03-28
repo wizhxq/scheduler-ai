@@ -1,9 +1,6 @@
 import json
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from openai import OpenAI
-import os
-
 from app.database import get_db
 from app.schemas.schemas import ChatRequest, ChatResponse
 from app.services.chat_tools import (
@@ -13,9 +10,21 @@ from app.services.chat_tools import (
     get_schedule_summary_text,
     TOOLS
 )
+import os
+
+# Groq is OpenAI-compatible and FREE - just swap the base_url
+# Sign up at console.groq.com to get your free API key
+try:
+    from openai import OpenAI
+    client = OpenAI(
+        api_key=os.getenv("GROQ_API_KEY", "your-groq-key-here"),
+        base_url="https://api.groq.com/openai/v1"
+    )
+    AI_MODEL = "llama-3.3-70b-versatile"  # Free on Groq
+except Exception:
+    client = None
 
 router = APIRouter()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 SYSTEM_PROMPT = """
 You are an AI scheduling assistant for a machine and work-order scheduler.
@@ -35,16 +44,22 @@ Always explain what you did and what the impact is on the schedule.
 
 @router.post("", response_model=ChatResponse)
 def chat(request: ChatRequest, db: Session = Depends(get_db)):
+    if client is None:
+        return ChatResponse(
+            reply="AI chat is not configured. Please set GROQ_API_KEY in your .env file. Get a free key at console.groq.com",
+            actions_taken=[]
+        )
+
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": request.message}
     ]
     actions_taken = []
 
-    # Agentic loop: keep calling OpenAI until no more tool calls
+    # Agentic loop: keep calling Groq until no more tool calls
     while True:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=AI_MODEL,
             messages=messages,
             tools=TOOLS,
             tool_choice="auto"
@@ -53,31 +68,28 @@ def chat(request: ChatRequest, db: Session = Depends(get_db)):
         messages.append(msg)
 
         if not msg.tool_calls:
-            # No more tool calls - we have the final answer
             break
 
-        # Execute each tool call
         for tool_call in msg.tool_calls:
-            fn_name = tool_call.function.name
-            fn_args = json.loads(tool_call.function.arguments)
+            fn = tool_call.function.name
+            args = json.loads(tool_call.function.arguments)
 
-            if fn_name == "update_work_order_deadline":
-                result = update_work_order_deadline(db, **fn_args)
-            elif fn_name == "change_work_order_priority":
-                result = change_work_order_priority(db, **fn_args)
-            elif fn_name == "recompute_schedule":
+            if fn == "update_work_order_deadline":
+                result = update_work_order_deadline(db, **args)
+            elif fn == "change_work_order_priority":
+                result = change_work_order_priority(db, **args)
+            elif fn == "recompute_schedule":
                 result = recompute_schedule(db)
-            elif fn_name == "get_schedule_summary_text":
+            elif fn == "get_schedule_summary_text":
                 result = get_schedule_summary_text(db)
             else:
-                result = f"Unknown tool: {fn_name}"
+                result = {"error": f"Unknown tool: {fn}"}
 
-            actions_taken.append(f"{fn_name}: {result}")
-
+            actions_taken.append({"tool": fn, "args": args, "result": result})
             messages.append({
                 "role": "tool",
                 "tool_call_id": tool_call.id,
-                "content": result
+                "content": json.dumps(result)
             })
 
     return ChatResponse(
