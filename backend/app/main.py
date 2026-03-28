@@ -3,8 +3,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.database import engine, Base
 from app.routes import machines, work_orders, operations, schedule, chat
 
-# Create all tables on startup
+# Create all tables on startup (new tables only; existing tables are not altered)
 Base.metadata.create_all(bind=engine)
+
+# Run migrations to add any missing columns to existing tables
+try:
+    from app.migrate_db import migrate
+    migrate()
+except Exception as e:
+    # Non-fatal: log and continue so the app still boots
+    print(f"[WARNING] Migration error (non-fatal): {e}")
 
 app = FastAPI(
     title="Scheduler AI",
@@ -27,6 +35,7 @@ app.include_router(work_orders.router, prefix="/api/work-orders", tags=["Work Or
 app.include_router(operations.router, prefix="/api/operations", tags=["Operations"])
 app.include_router(schedule.router, prefix="/api/schedule", tags=["Schedule"])
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
+
 
 @app.get("/")
 def root():
