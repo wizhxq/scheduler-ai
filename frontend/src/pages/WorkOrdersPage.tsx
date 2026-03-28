@@ -190,7 +190,7 @@ export default function WorkOrdersPage() {
                   
                   {ops.length > 0 ? (
                     <div className="space-y-2">
-                      {ops.sort((a,b) => a.sequence_no - b.sequence_no).map((op, idx) => {
+                      {ops.slice().sort((a,b) => a.sequence_no - b.sequence_no).map((op) => {
                         const m = machines.find(mach => mach.id === op.machine_id)
                         return (
                           <div key={op.id} className="flex items-center gap-3 bg-white/5 border border-white/5 rounded-xl p-3">
