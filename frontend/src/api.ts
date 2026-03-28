@@ -34,6 +34,8 @@ export const getLatestSchedule = () => api.get('/api/schedule/latest').then(r =>
 export const getScheduleHistory = (limit = 10) =>
   api.get('/api/schedule/history', { params: { limit } }).then(r => r.data)
 export const getKPIs = () => api.get('/api/schedule/kpis').then(r => r.data)
+export const updateScheduleItem = (id: number, data: { start_time: string; end_time: string }) =>
+  api.patch(`/api/schedule/items/${id}`, data).then(r => r.data)
 
 // Chat
 export const sendChat = (message: string) =>

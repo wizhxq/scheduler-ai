@@ -1,19 +1,11 @@
 """
 schedule.py — Schedule, KPI, and status-update routes.
-
-Fixes applied:
-  - enrich_run now computes makespan from actual item times (not a model field).
-  - /kpis uses WorkOrderStatus enum comparison (not .value) consistently.
-  - /work-orders/{id}/status validates against the WorkOrderStatus enum.
-  - /machines/{id}/status validates against the MachineStatus enum.
-  - Both PATCH endpoints return typed dicts instead of bare strings.
-  - compute triggers now accept an optional algorithm query param.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -37,7 +29,6 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 
 def _enrich_run(run: ScheduleRun, db: Session) -> ScheduleRunOut:
-    """Attach machine/WO names and compute derived fields for API output."""
     machine_map = {m.id: m.name for m in db.query(Machine).all()}
     wo_map = {wo.id: wo.code for wo in db.query(WorkOrder).all()}
 
@@ -60,7 +51,6 @@ def _enrich_run(run: ScheduleRun, db: Session) -> ScheduleRunOut:
         for item in run.items
     ]
 
-    # Makespan = span from earliest start to latest end across all items
     makespan = 0
     if run.items:
         earliest = min(i.start_time for i in run.items)
@@ -93,17 +83,12 @@ def trigger_schedule(
     algorithm: str = Query(default="EDD", enum=["EDD", "SPT", "FIFO", "CRITICAL_RATIO"]),
     db: Session = Depends(get_db),
 ):
-    """
-    Compute a new schedule from current data.
-    Optionally specify the sorting algorithm via ?algorithm=SPT etc.
-    """
     run = compute_schedule(db, label="manual", algorithm=algorithm)
     return _enrich_run(run, db)
 
 
 @router.get("/latest", response_model=ScheduleRunOut)
 def get_latest_schedule(db: Session = Depends(get_db)):
-    """Return the most recently computed schedule."""
     run = db.query(ScheduleRun).order_by(ScheduleRun.created_at.desc()).first()
     if not run:
         raise HTTPException(status_code=404, detail="No schedule computed yet.")
@@ -115,7 +100,6 @@ def get_schedule_history(
     limit: int = Query(default=10, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
-    """Return the last N schedule runs."""
     runs = (
         db.query(ScheduleRun)
         .order_by(ScheduleRun.created_at.desc())
@@ -126,12 +110,74 @@ def get_schedule_history(
 
 
 # ---------------------------------------------------------------------------
+# Schedule Item — manual reschedule from calendar
+# ---------------------------------------------------------------------------
+
+@router.patch("/items/{item_id}", response_model=ScheduleItemOut)
+def update_schedule_item(
+    item_id: int,
+    start_time: datetime = Body(...),
+    end_time: datetime = Body(...),
+    db: Session = Depends(get_db),
+):
+    """
+    Manually move a scheduled operation to a new start/end time.
+    Also updates the parent work order's due_date to match the new end_time
+    so the calendar and schedule stay in sync.
+    """
+    item = db.query(ScheduleItem).filter(ScheduleItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Schedule item not found.")
+
+    item.start_time = start_time
+    item.end_time = end_time
+
+    # Recalculate lateness against work order due date
+    wo = db.query(WorkOrder).filter(WorkOrder.id == item.work_order_id).first()
+    if wo:
+        if wo.due_date and end_time > wo.due_date:
+            item.is_late = True
+            item.delay_minutes = int((end_time - wo.due_date).total_seconds() / 60)
+        else:
+            item.is_late = False
+            item.delay_minutes = 0
+        # Sync work order due_date to the new end time so calendar shows it
+        wo.due_date = end_time
+
+    db.commit()
+    db.refresh(item)
+
+    machine_name = ""
+    wo_name = ""
+    m = db.query(Machine).filter(Machine.id == item.machine_id).first()
+    if m:
+        machine_name = m.name
+    if wo:
+        wo_name = wo.code
+
+    return ScheduleItemOut(
+        id=item.id,
+        schedule_run_id=item.schedule_run_id,
+        work_order_id=item.work_order_id,
+        operation_id=item.operation_id,
+        machine_id=item.machine_id,
+        machine_name=machine_name,
+        work_order_name=wo_name,
+        start_time=item.start_time,
+        end_time=item.end_time,
+        delay_minutes=item.delay_minutes or 0,
+        is_late=item.is_late or False,
+        is_conflict=item.is_conflict or False,
+        conflict_with_item_id=item.conflict_with_item_id,
+    )
+
+
+# ---------------------------------------------------------------------------
 # KPI endpoint
 # ---------------------------------------------------------------------------
 
 @router.get("/kpis", response_model=KPIOut)
 def get_kpis(db: Session = Depends(get_db)):
-    """Live KPI dashboard metrics."""
     now = datetime.utcnow()
     all_wos = db.query(WorkOrder).all()
 
@@ -172,7 +218,6 @@ def get_kpis(db: Session = Depends(get_db)):
         if latest_run
         else 0
     )
-    # Conflict count is across ALL runs (is_conflict is a persistent flag)
     conflicts = (
         db.query(ScheduleItem)
         .filter(ScheduleItem.is_conflict.is_(True))
@@ -210,17 +255,13 @@ def update_work_order_status(
     status: str,
     db: Session = Depends(get_db),
 ):
-    """Update work order status with automatic timestamp tracking."""
     wo = db.query(WorkOrder).filter(WorkOrder.id == wo_id).first()
     if not wo:
         raise HTTPException(status_code=404, detail="Work order not found.")
 
     valid = [s.value for s in WorkOrderStatus]
     if status not in valid:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Invalid status '{status}'. Valid values: {valid}",
-        )
+        raise HTTPException(status_code=422, detail=f"Invalid status '{status}'. Valid values: {valid}")
 
     now = datetime.utcnow()
     wo.status = WorkOrderStatus(status)
@@ -232,12 +273,7 @@ def update_work_order_status(
         wo.paused_at = now
 
     db.commit()
-    return {
-        "message": f"Work order {wo.code} status updated to '{status}'.",
-        "work_order_id": wo_id,
-        "new_status": status,
-        "updated_at": now.isoformat(),
-    }
+    return {"message": f"Work order {wo.code} status updated to '{status}'.", "work_order_id": wo_id, "new_status": status, "updated_at": now.isoformat()}
 
 
 @router.patch("/machines/{machine_id}/status")
@@ -247,25 +283,17 @@ def update_machine_status(
     notes: str = "",
     db: Session = Depends(get_db),
 ):
-    """Toggle machine availability status."""
     machine = db.query(Machine).filter(Machine.id == machine_id).first()
     if not machine:
         raise HTTPException(status_code=404, detail="Machine not found.")
 
     valid = [s.value for s in MachineStatus]
     if status not in valid:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Invalid status '{status}'. Valid values: {valid}",
-        )
+        raise HTTPException(status_code=422, detail=f"Invalid status '{status}'. Valid values: {valid}")
 
     machine.status = MachineStatus(status)
     if notes:
         machine.maintenance_notes = notes
 
     db.commit()
-    return {
-        "message": f"{machine.name} status set to '{status}'.",
-        "machine_id": machine_id,
-        "new_status": status,
-    }
+    return {"message": f"{machine.name} status set to '{status}'.", "machine_id": machine_id, "new_status": status}
