@@ -8,14 +8,8 @@ services:
       - "8000:8000"
     env_file:
       - .env
-    environment:
-      # sqlite:///  = relative,  sqlite:////  = absolute with leading /
-      # /data/scheduler.db is an absolute path, so we need exactly 4 slashes total:
-      #   sqlite:// + //data/scheduler.db  = sqlite:////data/scheduler.db  ✓
-      - DATABASE_URL=sqlite:////data/scheduler.db
     volumes:
-      - ./backend:/app          # live-reload source code
-      - scheduler_db:/data      # persistent DB — survives docker-compose --build
+      - ./backend:/app
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   frontend:
@@ -27,6 +21,3 @@ services:
       - backend
     environment:
       - VITE_API_URL=http://localhost:8000
-
-volumes:
-  scheduler_db:   # named volume — Docker manages it, never deleted on rebuild
